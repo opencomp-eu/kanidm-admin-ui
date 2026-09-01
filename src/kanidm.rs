@@ -356,8 +356,8 @@ impl KanidmClient {
         let token = intent["token"].as_str()
             .ok_or_else(|| AppError::Upstream("missing token in response".into()))?;
         
-        // Return the reset URL
-        Ok(format!("/ui/reset?token={token}"))
+        // Return the reset URL using the Kanidm server URL
+        Ok(format!("{}/ui/reset?token={token}", self.base_url))
     }
 
     // -- Groups --

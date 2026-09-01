@@ -321,7 +321,7 @@ export default function UserDetail() {
                   fontSize: 13,
                   wordBreak: "break-all"
                 }}>
-                  {window.location.origin}{resetUrl}
+                  {resetUrl}
                 </div>
                 <p style={{ color: "var(--text-muted)", fontSize: 12, marginTop: 8 }}>
                   This token is single-use and expires after 1 hour.

@@ -43,5 +43,5 @@ export function userDisplayName(entry: KanidmEntry): string {
 }
 
 export function userStatus(entry: KanidmEntry): string {
-  return attrVal(entry, "status") || "unknown";
+  return attrVal(entry, "status") || "active";
 }

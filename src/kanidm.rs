@@ -229,7 +229,7 @@ impl KanidmClient {
         let filter = Filter::or(vec![
             Filter::cnt("name", query),
             Filter::cnt("displayname", query),
-            Filter::cnt("mail_primary", query),
+            Filter::cnt("mail", query),
         ]);
         let body = SearchRequest { filter };
         let resp = Self::check_response(self.post("/v1/person/_search", &body).await?).await?;

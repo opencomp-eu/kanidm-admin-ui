@@ -88,7 +88,7 @@ export default function UserDetail() {
   if (!user) return <div className="error">User not found</div>;
 
   const status = userStatus(user);
-  const memberOf = attrVals(user, "group");
+  const memberOf = attrVals(user, "memberof");
   const availableGroups = allGroups.filter(
     (g) => !memberOf.includes(attrVal(g, "name")),
   );
@@ -122,7 +122,7 @@ export default function UserDetail() {
           <dt>Display Name</dt>
           <dd>{attrVal(user, "displayname")}</dd>
           <dt>Email</dt>
-          <dd>{attrVal(user, "mail_primary") || "—"}</dd>
+          <dd>{attrVal(user, "mail") || "—"}</dd>
           <dt>UUID</dt>
           <dd>{attrVal(user, "uuid")}</dd>
           <dt>Status</dt>

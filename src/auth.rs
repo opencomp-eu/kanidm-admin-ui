@@ -300,7 +300,7 @@ pub async fn whoami_handler(
             "attrs": {
                 "name": [session.0.user_id],
                 "displayname": [session.0.display_name],
-                "mail_primary": [session.0.email],
+                "mail": [session.0.email],
             }
         }
     })))

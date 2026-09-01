@@ -13,7 +13,7 @@ export default function Users() {
   const [createForm, setCreateForm] = useState({
     name: "",
     displayname: "",
-    mail_primary: "",
+    mail: "",
     password: "",
   });
   const [creating, setCreating] = useState(false);
@@ -40,7 +40,7 @@ export default function Users() {
     try {
       await createUser(createForm);
       setShowCreate(false);
-      setCreateForm({ name: "", displayname: "", mail_primary: "", password: "" });
+      setCreateForm({ name: "", displayname: "", mail: "", password: "" });
       load();
     } catch (e) {
       setError(String(e));
@@ -94,7 +94,7 @@ export default function Users() {
                   </Link>
                 </td>
                 <td>{attrVal(u, "name")}</td>
-                <td>{attrVal(u, "mail_primary")}</td>
+                <td>{attrVal(u, "mail")}</td>
                 <td>
                   <span
                     className={`badge ${
@@ -141,9 +141,9 @@ export default function Users() {
                 <label>Email</label>
                 <input
                   type="email"
-                  value={createForm.mail_primary}
+                  value={createForm.mail}
                   onChange={(e) =>
-                    setCreateForm((f) => ({ ...f, mail_primary: e.target.value }))
+                    setCreateForm((f) => ({ ...f, mail: e.target.value }))
                   }
                 />
               </div>

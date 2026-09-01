@@ -51,7 +51,7 @@ async fn get_user(
 pub struct CreateUserRequest {
     name: String,
     displayname: String,
-    mail_primary: Option<String>,
+    mail: Option<String>,
     #[allow(dead_code)]
     password: Option<String>,
 }
@@ -63,7 +63,7 @@ async fn create_user(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let entry = state
         .kanidm
-        .create_person(&input.name, &input.displayname, input.mail_primary.as_deref())
+        .create_person(&input.name, &input.displayname, input.mail.as_deref())
         .await?;
     Ok(Json(entry_to_json(entry)))
 }

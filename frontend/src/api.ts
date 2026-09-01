@@ -47,7 +47,7 @@ export async function getUser(id: string): Promise<KanidmEntry> {
 export async function createUser(data: {
   name: string;
   displayname: string;
-  mail_primary?: string;
+  mail?: string;
   password?: string;
 }): Promise<KanidmEntry> {
   return request<KanidmEntry>("/users", {

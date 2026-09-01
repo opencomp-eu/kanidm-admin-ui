@@ -252,13 +252,10 @@ impl KanidmClient {
         attrs.insert("name".to_string(), vec![name.to_string()]);
         attrs.insert("displayname".to_string(), vec![displayname.to_string()]);
         if let Some(m) = mail {
-            attrs.insert("mail_primary".to_string(), vec![m.to_string()]);
+            attrs.insert("mail".to_string(), vec![m.to_string()]);
         }
 
-        let entry = Entry { attrs };
-        let body = CreateRequest {
-            entries: vec![entry],
-        };
+        let body = Entry { attrs };
 
         let resp = Self::check_response(self.post("/v1/person", &body).await?).await?;
         resp.json().await.map_err(|e| AppError::Upstream(e.to_string()))
@@ -375,10 +372,7 @@ impl KanidmClient {
             }
         }
 
-        let entry = Entry { attrs };
-        let body = CreateRequest {
-            entries: vec![entry],
-        };
+        let body = Entry { attrs };
 
         let resp = Self::check_response(self.post("/v1/group", &body).await?).await?;
         resp.json().await.map_err(|e| AppError::Upstream(e.to_string()))
@@ -458,10 +452,7 @@ impl KanidmClient {
         attrs.insert("origin".to_string(), vec![origin.to_string()]);
         attrs.insert("redirect_uri".to_string(), vec![redirect_uri.to_string()]);
 
-        let entry = Entry { attrs };
-        let body = CreateRequest {
-            entries: vec![entry],
-        };
+        let body = Entry { attrs };
 
         let resp = Self::check_response(self.post("/v1/oauth2/_basic", &body).await?).await?;
         resp.json().await.map_err(|e| AppError::Upstream(e.to_string()))

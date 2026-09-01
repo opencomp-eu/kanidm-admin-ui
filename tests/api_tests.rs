@@ -98,4 +98,16 @@ mod tests {
         let config = test_config();
         let _client = KanidmClient::new(&config);
     }
+
+    #[test]
+    fn test_entry_serialization_for_create() {
+        let mut attrs = HashMap::new();
+        attrs.insert("name".into(), vec!["testuser".into()]);
+        attrs.insert("displayname".into(), vec!["Test User".into()]);
+        let entry = Entry { attrs };
+        let json = serde_json::to_value(&entry).unwrap();
+        assert!(json["attrs"].is_object());
+        assert_eq!(json["attrs"]["name"], serde_json::json!(["testuser"]));
+        assert_eq!(json["attrs"]["displayname"], serde_json::json!(["Test User"]));
+    }
 }

@@ -8,6 +8,16 @@ struct CopyGroupsRequest {
     source_user: String,
 }
 
+#[derive(Deserialize)]
+struct SetPasswordRequest {
+    password: String,
+}
+
+#[derive(serde::Serialize)]
+struct ResetTokenResponse {
+    reset_url: String,
+}
+
 use crate::auth::AuthSession;
 use crate::error::AppError;
 use crate::AppState;
@@ -29,6 +39,7 @@ pub fn router() -> Router<AppState> {
             post(add_user_to_group).delete(remove_user_from_group),
         )
         .route("/{id}/copy-groups-from", post(copy_groups_from))
+        .route("/{id}/set-password", post(set_password))
 }
 
 async fn list_users(
@@ -144,6 +155,16 @@ async fn copy_groups_from(
         }
     }
     Ok(Json(added))
+}
+
+async fn set_password(
+    _session: AuthSession,
+    axum::extract::State(state): axum::extract::State<AppState>,
+    Path(id): Path<String>,
+    Json(_input): Json<SetPasswordRequest>,
+) -> Result<Json<ResetTokenResponse>, AppError> {
+    let reset_url = state.kanidm.set_person_password(&id, "").await?;
+    Ok(Json(ResetTokenResponse { reset_url }))
 }
 
 fn entry_to_json(entry: crate::kanidm::Entry) -> serde_json::Value {

@@ -11,6 +11,7 @@ import {
   listGroups,
   listUsers,
   copyGroupsFrom,
+  setUserPassword,
 } from "../api";
 import type { KanidmEntry } from "../types";
 import { attrVal, attrVals, userDisplayName, userStatus } from "../types";
@@ -29,6 +30,8 @@ export default function UserDetail() {
   const [allUsers, setAllUsers] = useState<KanidmEntry[]>([]);
   const [copySearch, setCopySearch] = useState("");
   const [copying, setCopying] = useState(false);
+  const [showSetPassword, setShowSetPassword] = useState(false);
+  const [resetUrl, setResetUrl] = useState("");
 
   const load = () => {
     if (!id) return;
@@ -127,6 +130,22 @@ export default function UserDetail() {
     }
   };
 
+  const handleSetPassword = async () => {
+    if (!id) return;
+    try {
+      const result = await setUserPassword(id, "");
+      setResetUrl(result.reset_url);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  useEffect(() => {
+    if (showSetPassword && !resetUrl) {
+      handleSetPassword();
+    }
+  }, [showSetPassword, resetUrl]);
+
   if (loading) return <div className="loading">Loading...</div>;
   if (!user) return <div className="error">User not found</div>;
 
@@ -158,7 +177,12 @@ export default function UserDetail() {
       {error && <div className="error">{error}</div>}
 
       <div className="card">
-        <h2>Account Details</h2>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <h2 style={{ marginBottom: 0 }}>Account Details</h2>
+          <button className="btn-ghost btn-sm" onClick={() => setShowSetPassword(true)}>
+            Set Password
+          </button>
+        </div>
         <dl className="detail-grid">
           <dt>Username</dt>
           <dd>{attrVal(user, "name")}</dd>
@@ -275,6 +299,42 @@ export default function UserDetail() {
             <div className="modal-actions">
               <button className="btn-ghost" onClick={() => { setShowCopyGroups(false); setCopySearch(""); }}>
                 Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showSetPassword && (
+        <div className="modal-overlay" onClick={() => { setShowSetPassword(false); setResetUrl(""); }}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>Credential Reset for {attrVal(user, "name")}</h2>
+            {resetUrl ? (
+              <div style={{ marginTop: 12 }}>
+                <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 8 }}>
+                  Share this link with the user to set their password:
+                </p>
+                <div style={{ 
+                  background: "var(--bg-secondary)", 
+                  padding: "12px", 
+                  borderRadius: "6px",
+                  fontFamily: "monospace",
+                  fontSize: 13,
+                  wordBreak: "break-all"
+                }}>
+                  {window.location.origin}{resetUrl}
+                </div>
+                <p style={{ color: "var(--text-muted)", fontSize: 12, marginTop: 8 }}>
+                  This token is single-use and expires after 1 hour.
+                </p>
+              </div>
+            ) : (
+              <p style={{ color: "var(--text-muted)", marginTop: 12 }}>
+                Generating reset token...
+              </p>
+            )}
+            <div className="modal-actions">
+              <button className="btn-ghost" onClick={() => { setShowSetPassword(false); setResetUrl(""); }}>
+                Close
               </button>
             </div>
           </div>

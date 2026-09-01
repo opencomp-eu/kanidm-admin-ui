@@ -113,6 +113,19 @@ export async function copyGroupsFrom(
   );
 }
 
+export async function setUserPassword(
+  userId: string,
+  _password: string,
+): Promise<{ reset_url: string }> {
+  return request<{ reset_url: string }>(
+    `/users/${encodeURIComponent(userId)}/set-password`,
+    {
+      method: "POST",
+      body: JSON.stringify({ password: _password }),
+    },
+  );
+}
+
 // Groups
 export async function listGroups(search?: string): Promise<KanidmEntry[]> {
   const params = new URLSearchParams();

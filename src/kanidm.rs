@@ -100,6 +100,19 @@ pub struct SingleStringRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CredentialUpdateSessionToken {
+    pub token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CredentialStatus {
+    pub spn: String,
+    pub displayname: String,
+    pub can_commit: bool,
+    pub primary_state: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiTokenGenerate {
     pub label: String,
     pub expiry: Option<String>,
@@ -190,6 +203,28 @@ impl KanidmClient {
             .map_err(|e| AppError::Upstream(e.to_string()))
     }
 
+    async fn post_text(&self, path: &str, body: &str) -> Result<reqwest::Response, AppError> {
+        self.http
+            .post(self.url(path))
+            .bearer_auth(&self.token)
+            .header("Content-Type", "text/plain")
+            .body(body.to_string())
+            .send()
+            .await
+            .map_err(|e| AppError::Upstream(e.to_string()))
+    }
+
+    async fn post_with_token<T: Serialize>(&self, path: &str, body: &T, session_token: &str) -> Result<reqwest::Response, AppError> {
+        self.http
+            .post(self.url(path))
+            .bearer_auth(&self.token)
+            .header("X-Kanidm-cred-update-session", session_token)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| AppError::Upstream(e.to_string()))
+    }
+
     async fn check_response(resp: reqwest::Response) -> Result<reqwest::Response, AppError> {
         if resp.status().is_success() {
             Ok(resp)
@@ -258,7 +293,10 @@ impl KanidmClient {
         let body = Entry { attrs };
 
         let resp = Self::check_response(self.post("/v1/person", &body).await?).await?;
-        resp.json().await.map_err(|e| AppError::Upstream(e.to_string()))
+        // Kanidm may not return the full entry, so we just consume the response
+        // and return what we sent (the entry was created successfully if no error)
+        let _ = resp.text().await;
+        Ok(Entry { attrs: body.attrs })
     }
 
     pub async fn delete_person(&self, id: &str) -> Result<(), AppError> {
@@ -338,6 +376,27 @@ impl KanidmClient {
         Ok(())
     }
 
+    // -- Credentials --
+    pub async fn set_person_password(
+        &self,
+        person_id: &str,
+        _password: &str,
+    ) -> Result<String, AppError> {
+        // Kanidm doesn't support direct password setting via API.
+        // Instead, generate a reset token that the user can use to set their own password.
+        let resp = Self::check_response(
+            self.get(&format!("/v1/person/{person_id}/_credential/_update_intent")).await?
+        ).await?;
+        let intent: serde_json::Value = resp.json().await
+            .map_err(|e| AppError::Upstream(format!("failed to get reset token: {e}")))?;
+        
+        let token = intent["token"].as_str()
+            .ok_or_else(|| AppError::Upstream("missing token in response".into()))?;
+        
+        // Return the reset URL
+        Ok(format!("/ui/reset?token={token}"))
+    }
+
     // -- Groups --
     pub async fn list_groups(&self) -> Result<Vec<Entry>, AppError> {
         let resp = Self::check_response(self.get("/v1/group").await?).await?;
@@ -376,7 +435,8 @@ impl KanidmClient {
         let body = Entry { attrs };
 
         let resp = Self::check_response(self.post("/v1/group", &body).await?).await?;
-        resp.json().await.map_err(|e| AppError::Upstream(e.to_string()))
+        let _ = resp.text().await;
+        Ok(Entry { attrs: body.attrs })
     }
 
     pub async fn delete_group(&self, id: &str) -> Result<(), AppError> {
@@ -456,7 +516,8 @@ impl KanidmClient {
         let body = Entry { attrs };
 
         let resp = Self::check_response(self.post("/v1/oauth2/_basic", &body).await?).await?;
-        resp.json().await.map_err(|e| AppError::Upstream(e.to_string()))
+        let _ = resp.text().await;
+        Ok(Entry { attrs: body.attrs })
     }
 
     pub async fn delete_oauth2(&self, rs_name: &str) -> Result<(), AppError> {

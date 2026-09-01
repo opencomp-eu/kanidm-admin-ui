@@ -14,7 +14,6 @@ export default function Users() {
     name: "",
     displayname: "",
     mail: "",
-    password: "",
   });
   const [creating, setCreating] = useState(false);
 
@@ -40,7 +39,7 @@ export default function Users() {
     try {
       await createUser(createForm);
       setShowCreate(false);
-      setCreateForm({ name: "", displayname: "", mail: "", password: "" });
+      setCreateForm({ name: "", displayname: "", mail: "" });
       load();
     } catch (e) {
       setError(String(e));
@@ -144,17 +143,6 @@ export default function Users() {
                   value={createForm.mail}
                   onChange={(e) =>
                     setCreateForm((f) => ({ ...f, mail: e.target.value }))
-                  }
-                />
-              </div>
-              <div className="form-group">
-                <label>Password</label>
-                <input
-                  type="password"
-                  required
-                  value={createForm.password}
-                  onChange={(e) =>
-                    setCreateForm((f) => ({ ...f, password: e.target.value }))
                   }
                 />
               </div>

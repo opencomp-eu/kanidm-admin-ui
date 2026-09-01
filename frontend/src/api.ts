@@ -48,7 +48,6 @@ export async function createUser(data: {
   name: string;
   displayname: string;
   mail?: string;
-  password?: string;
 }): Promise<KanidmEntry> {
   return request<KanidmEntry>("/users", {
     method: "POST",
@@ -113,15 +112,14 @@ export async function copyGroupsFrom(
   );
 }
 
-export async function setUserPassword(
+export async function generateResetToken(
   userId: string,
-  _password: string,
 ): Promise<{ reset_url: string }> {
   return request<{ reset_url: string }>(
     `/users/${encodeURIComponent(userId)}/set-password`,
     {
       method: "POST",
-      body: JSON.stringify({ password: _password }),
+      body: JSON.stringify({}),
     },
   );
 }

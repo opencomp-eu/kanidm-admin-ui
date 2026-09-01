@@ -9,9 +9,7 @@ struct CopyGroupsRequest {
 }
 
 #[derive(Deserialize)]
-struct SetPasswordRequest {
-    password: String,
-}
+struct SetPasswordRequest {}
 
 #[derive(serde::Serialize)]
 struct ResetTokenResponse {
@@ -69,8 +67,6 @@ pub struct CreateUserRequest {
     name: String,
     displayname: String,
     mail: Option<String>,
-    #[allow(dead_code)]
-    password: Option<String>,
 }
 
 async fn create_user(
@@ -163,7 +159,7 @@ async fn set_password(
     Path(id): Path<String>,
     Json(_input): Json<SetPasswordRequest>,
 ) -> Result<Json<ResetTokenResponse>, AppError> {
-    let reset_url = state.kanidm.set_person_password(&id, "").await?;
+    let reset_url = state.kanidm.generate_reset_token(&id).await?;
     Ok(Json(ResetTokenResponse { reset_url }))
 }
 

@@ -11,7 +11,7 @@ import {
   listGroups,
   listUsers,
   copyGroupsFrom,
-  setUserPassword,
+  generateResetToken,
 } from "../api";
 import type { KanidmEntry } from "../types";
 import { attrVal, attrVals, userDisplayName, userStatus } from "../types";
@@ -133,7 +133,7 @@ export default function UserDetail() {
   const handleSetPassword = async () => {
     if (!id) return;
     try {
-      const result = await setUserPassword(id, "");
+      const result = await generateResetToken(id);
       setResetUrl(result.reset_url);
     } catch (e) {
       setError(String(e));
@@ -180,7 +180,7 @@ export default function UserDetail() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <h2 style={{ marginBottom: 0 }}>Account Details</h2>
           <button className="btn-ghost btn-sm" onClick={() => setShowSetPassword(true)}>
-            Set Password
+            Generate Reset Token
           </button>
         </div>
         <dl className="detail-grid">

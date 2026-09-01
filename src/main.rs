@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use axum::Router;
 use tokio::net::TcpListener;
-use tower_http::services::ServeDir;
+use tower_http::services::{ServeDir, ServeFile};
 use tracing_subscriber::EnvFilter;
 
 use kanidm_admin_ui::auth;
@@ -35,9 +35,12 @@ async fn main() -> Result<()> {
 
     let static_dir = PathBuf::from("static");
     let app = if static_dir.exists() {
+        let spa_fallback = ServeDir::new(&static_dir)
+            .append_index_html_on_directories(true)
+            .not_found_service(ServeFile::new(static_dir.join("index.html")));
         Router::new()
             .nest("/api", api_routes)
-            .fallback_service(ServeDir::new(&static_dir).append_index_html_on_directories(true))
+            .fallback_service(spa_fallback)
     } else {
         Router::new().nest("/api", api_routes)
     };

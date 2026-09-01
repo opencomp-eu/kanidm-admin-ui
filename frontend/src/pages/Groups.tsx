@@ -3,8 +3,10 @@ import { Link } from "react-router-dom";
 import { listGroups, createGroup } from "../api";
 import type { KanidmEntry } from "../types";
 import { attrVal } from "../types";
+import { useToast } from "../components/Layout";
 
 export default function Groups() {
+  const { addToast } = useToast();
   const [groups, setGroups] = useState<KanidmEntry[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -36,6 +38,7 @@ export default function Groups() {
       await createGroup(createForm);
       setShowCreate(false);
       setCreateForm({ name: "", description: "" });
+      addToast("Group created");
       load();
     } catch (e) {
       setError(String(e));

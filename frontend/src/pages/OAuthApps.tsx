@@ -3,8 +3,10 @@ import { listOAuth2Apps, createOAuth2App, deleteOAuth2App } from "../api";
 import type { KanidmEntry } from "../types";
 import { attrVal } from "../types";
 import ConfirmDialog from "../components/ConfirmDialog";
+import { useToast } from "../components/Layout";
 
 export default function OAuthApps() {
+  const { addToast } = useToast();
   const [apps, setApps] = useState<KanidmEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -36,6 +38,7 @@ export default function OAuthApps() {
       await createOAuth2App(createForm);
       setShowCreate(false);
       setCreateForm({ name: "", displayname: "", origin: "", redirect_uri: "" });
+      addToast("OAuth2 app created");
       load();
     } catch (e) {
       setError(String(e));
@@ -49,6 +52,7 @@ export default function OAuthApps() {
     try {
       await deleteOAuth2App(deleteTarget);
       setDeleteTarget(null);
+      addToast("OAuth2 app deleted");
       load();
     } catch (e) {
       setError(String(e));

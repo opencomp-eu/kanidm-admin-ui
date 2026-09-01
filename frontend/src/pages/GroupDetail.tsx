@@ -11,8 +11,10 @@ import {
 import type { KanidmEntry } from "../types";
 import { attrVal, attrVals } from "../types";
 import ConfirmDialog from "../components/ConfirmDialog";
+import { useToast } from "../components/Layout";
 
 export default function GroupDetail() {
+  const { addToast } = useToast();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [group, setGroup] = useState<KanidmEntry | null>(null);
@@ -41,6 +43,7 @@ export default function GroupDetail() {
     try {
       await deleteGroup(id);
       navigate("/groups");
+      addToast("Group deleted");
     } catch (e) {
       setError(String(e));
     }
@@ -51,6 +54,7 @@ export default function GroupDetail() {
     try {
       await addGroupMember(id, userId);
       setShowAddMember(false);
+      addToast("Member added");
       load();
     } catch (e) {
       setError(String(e));
@@ -61,6 +65,7 @@ export default function GroupDetail() {
     if (!id) return;
     try {
       await removeGroupMember(id, userId);
+      addToast("Member removed");
       load();
     } catch (e) {
       setError(String(e));

@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { listUsers, createUser } from "../api";
+import { listUsers, createUser, generateResetToken } from "../api";
 import type { KanidmEntry } from "../types";
 import { attrVal, userDisplayName, userStatus } from "../types";
+import { useToast } from "../components/Layout";
 
 export default function Users() {
   const [users, setUsers] = useState<KanidmEntry[]>([]);
@@ -16,6 +17,9 @@ export default function Users() {
     mail: "",
   });
   const [creating, setCreating] = useState(false);
+  const [resetUrl, setResetUrl] = useState("");
+  const [createdUsername, setCreatedUsername] = useState("");
+  const { addToast } = useToast();
 
   const load = () => {
     setLoading(true);
@@ -38,14 +42,37 @@ export default function Users() {
     setError("");
     try {
       await createUser(createForm);
-      setShowCreate(false);
+      const username = createForm.name;
+      setCreatedUsername(username);
       setCreateForm({ name: "", displayname: "", mail: "" });
       load();
+      try {
+        const result = await generateResetToken(username);
+        setResetUrl(result.reset_url);
+      } catch {
+        setShowCreate(false);
+        addToast("User created");
+      }
     } catch (e) {
       setError(String(e));
     } finally {
       setCreating(false);
     }
+  };
+
+  const handleCopyResetUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(resetUrl);
+      addToast("Reset URL copied to clipboard");
+    } catch {
+      addToast("Failed to copy", "error");
+    }
+  };
+
+  const handleCloseResetModal = () => {
+    setResetUrl("");
+    setCreatedUsername("");
+    setShowCreate(false);
   };
 
   return (
@@ -110,7 +137,7 @@ export default function Users() {
       )}
 
       {showCreate && (
-        <div className="modal-overlay" onClick={() => setShowCreate(false)}>
+        <div className="modal-overlay" onClick={handleCloseResetModal}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h2>Create User</h2>
             <form onSubmit={handleCreate}>
@@ -150,7 +177,7 @@ export default function Users() {
                 <button
                   type="button"
                   className="btn-ghost"
-                  onClick={() => setShowCreate(false)}
+                  onClick={handleCloseResetModal}
                 >
                   Cancel
                 </button>
@@ -159,6 +186,40 @@ export default function Users() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {resetUrl && (
+        <div className="modal-overlay" onClick={handleCloseResetModal}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>User Created</h2>
+            <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 12 }}>
+              {createdUsername} has been created. Share this password reset link:
+            </p>
+            <div style={{
+              background: "var(--bg-secondary)",
+              padding: "12px",
+              borderRadius: "6px",
+              fontFamily: "monospace",
+              fontSize: 13,
+              wordBreak: "break-all"
+            }}>
+              {resetUrl}
+            </div>
+            <div style={{ marginTop: 10 }}>
+              <button className="btn-copy" onClick={handleCopyResetUrl}>
+                Copy URL
+              </button>
+            </div>
+            <p style={{ color: "var(--text-muted)", fontSize: 12, marginTop: 8 }}>
+              This token is single-use and expires after 1 hour.
+            </p>
+            <div className="modal-actions">
+              <button className="btn-ghost" onClick={handleCloseResetModal}>
+                Done
+              </button>
+            </div>
           </div>
         </div>
       )}

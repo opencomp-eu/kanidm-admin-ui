@@ -16,10 +16,12 @@ import {
 import type { KanidmEntry } from "../types";
 import { attrVal, attrVals, userDisplayName, userStatus } from "../types";
 import ConfirmDialog from "../components/ConfirmDialog";
+import { useToast } from "../components/Layout";
 
 export default function UserDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { addToast } = useToast();
   const [user, setUser] = useState<KanidmEntry | null>(null);
   const [allGroups, setAllGroups] = useState<KanidmEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -52,6 +54,7 @@ export default function UserDetail() {
     try {
       await deleteUser(id);
       navigate("/users");
+      addToast("User deleted");
     } catch (e) {
       setError(String(e));
     }
@@ -63,8 +66,10 @@ export default function UserDetail() {
       const status = userStatus(user!);
       if (status === "active") {
         await disableUser(id);
+        addToast("User disabled");
       } else {
         await enableUser(id);
+        addToast("User enabled");
       }
       load();
     } catch (e) {
@@ -77,6 +82,7 @@ export default function UserDetail() {
     try {
       await addUserToGroup(id, groupName);
       setShowAddGroup(false);
+      addToast(`Added to ${groupName}`);
       load();
     } catch (e) {
       setError(String(e));
@@ -87,6 +93,7 @@ export default function UserDetail() {
     if (!id) return;
     try {
       await removeUserFromGroup(id, groupName);
+      addToast(`Removed from ${groupName}`);
       load();
     } catch (e) {
       setError(String(e));
@@ -111,6 +118,7 @@ export default function UserDetail() {
       await copyGroupsFrom(id, sourceUser);
       setShowCopyGroups(false);
       setCopySearch("");
+      addToast(`Groups copied from ${sourceUser}`);
       load();
     } catch (e) {
       setError(String(e));
@@ -137,6 +145,15 @@ export default function UserDetail() {
       setResetUrl(result.reset_url);
     } catch (e) {
       setError(String(e));
+    }
+  };
+
+  const handleCopyResetUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(resetUrl);
+      addToast("Reset URL copied to clipboard");
+    } catch {
+      addToast("Failed to copy", "error");
     }
   };
 
@@ -313,15 +330,20 @@ export default function UserDetail() {
                 <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 8 }}>
                   Share this link with the user to set their password:
                 </p>
-                <div style={{ 
-                  background: "var(--bg-secondary)", 
-                  padding: "12px", 
+                <div style={{
+                  background: "var(--bg-secondary)",
+                  padding: "12px",
                   borderRadius: "6px",
                   fontFamily: "monospace",
                   fontSize: 13,
                   wordBreak: "break-all"
                 }}>
                   {resetUrl}
+                </div>
+                <div style={{ marginTop: 10 }}>
+                  <button className="btn-copy" onClick={handleCopyResetUrl}>
+                    Copy URL
+                  </button>
                 </div>
                 <p style={{ color: "var(--text-muted)", fontSize: 12, marginTop: 8 }}>
                   This token is single-use and expires after 1 hour.

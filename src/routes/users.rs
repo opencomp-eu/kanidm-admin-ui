@@ -3,6 +3,11 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 
+#[derive(Deserialize)]
+struct CopyGroupsRequest {
+    source_user: String,
+}
+
 use crate::auth::AuthSession;
 use crate::error::AppError;
 use crate::AppState;
@@ -23,6 +28,7 @@ pub fn router() -> Router<AppState> {
             "/{id}/groups/{group}",
             post(add_user_to_group).delete(remove_user_from_group),
         )
+        .route("/{id}/copy-groups-from", post(copy_groups_from))
 }
 
 async fn list_users(
@@ -115,6 +121,29 @@ async fn remove_user_from_group(
     Path((id, group)): Path<(String, String)>,
 ) -> Result<(), AppError> {
     state.kanidm.remove_person_from_group(&id, &group).await
+}
+
+async fn copy_groups_from(
+    _session: AuthSession,
+    axum::extract::State(state): axum::extract::State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<CopyGroupsRequest>,
+) -> Result<Json<Vec<String>>, AppError> {
+    let source = state.kanidm.get_person(&input.source_user).await?;
+    let group_spns: Vec<String> = source
+        .attrs
+        .get("memberof")
+        .cloned()
+        .unwrap_or_default();
+
+    let mut added = Vec::new();
+    for spn in &group_spns {
+        let group_name = spn.split('@').next().unwrap_or(spn);
+        if state.kanidm.add_person_to_group(&id, group_name).await.is_ok() {
+            added.push(group_name.to_string());
+        }
+    }
+    Ok(Json(added))
 }
 
 fn entry_to_json(entry: crate::kanidm::Entry) -> serde_json::Value {

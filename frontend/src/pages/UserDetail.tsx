@@ -9,6 +9,8 @@ import {
   addUserToGroup,
   removeUserFromGroup,
   listGroups,
+  listUsers,
+  copyGroupsFrom,
 } from "../api";
 import type { KanidmEntry } from "../types";
 import { attrVal, attrVals, userDisplayName, userStatus } from "../types";
@@ -23,6 +25,10 @@ export default function UserDetail() {
   const [error, setError] = useState("");
   const [showDelete, setShowDelete] = useState(false);
   const [showAddGroup, setShowAddGroup] = useState(false);
+  const [showCopyGroups, setShowCopyGroups] = useState(false);
+  const [allUsers, setAllUsers] = useState<KanidmEntry[]>([]);
+  const [copySearch, setCopySearch] = useState("");
+  const [copying, setCopying] = useState(false);
 
   const load = () => {
     if (!id) return;
@@ -84,6 +90,43 @@ export default function UserDetail() {
     }
   };
 
+  const handleCopySearch = (query: string) => {
+    setCopySearch(query);
+  };
+
+  const filteredUsers = allUsers.filter((u) => {
+    const name = attrVal(u, "name");
+    const displayName = userDisplayName(u);
+    const q = copySearch.toLowerCase();
+    return name !== id && (name.toLowerCase().includes(q) || displayName.toLowerCase().includes(q));
+  });
+
+  const handleCopyGroups = async (sourceUser: string) => {
+    if (!id) return;
+    setCopying(true);
+    try {
+      await copyGroupsFrom(id, sourceUser);
+      setShowCopyGroups(false);
+      setCopySearch("");
+      load();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setCopying(false);
+    }
+  };
+
+  const handleOpenCopyGroups = async () => {
+    setShowCopyGroups(true);
+    setCopySearch("");
+    try {
+      const users = await listUsers();
+      setAllUsers(users);
+    } catch {
+      setAllUsers([]);
+    }
+  };
+
   if (loading) return <div className="loading">Loading...</div>;
   if (!user) return <div className="error">User not found</div>;
 
@@ -140,6 +183,9 @@ export default function UserDetail() {
           <button className="btn-primary btn-sm" onClick={() => setShowAddGroup(true)}>
             Add to Group
           </button>
+          <button className="btn-ghost btn-sm" onClick={handleOpenCopyGroups}>
+            Copy Groups From...
+          </button>
         </div>
         {memberOf.length === 0 ? (
           <div style={{ color: "var(--text-muted)", fontSize: 14 }}>No group memberships</div>
@@ -189,6 +235,46 @@ export default function UserDetail() {
             <div className="modal-actions">
               <button className="btn-ghost" onClick={() => setShowAddGroup(false)}>
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showCopyGroups && (
+        <div className="modal-overlay" onClick={() => setShowCopyGroups(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>Copy Groups From User</h2>
+            <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 12 }}>
+              Search for a user to copy their group memberships to {attrVal(user, "name")}.
+            </p>
+            <input
+              type="search"
+              placeholder="Search users..."
+              value={copySearch}
+              onChange={(e) => handleCopySearch(e.target.value)}
+              autoFocus
+            />
+            {filteredUsers.length > 0 && (
+              <div style={{ marginTop: 12, maxHeight: 200, overflowY: "auto" }}>
+                {filteredUsers.map((u) => (
+                  <button
+                    key={attrVal(u, "name")}
+                    className="tag"
+                    style={{ cursor: "pointer", border: "none", display: "block", width: "100%", textAlign: "left", padding: "8px 12px" }}
+                    onClick={() => handleCopyGroups(attrVal(u, "name"))}
+                    disabled={copying}
+                  >
+                    {userDisplayName(u)} ({attrVal(u, "name")})
+                  </button>
+                ))}
+              </div>
+            )}
+            {copySearch.length > 0 && filteredUsers.length === 0 && (
+              <div style={{ marginTop: 12, color: "var(--text-muted)", fontSize: 14 }}>No users found</div>
+            )}
+            <div className="modal-actions">
+              <button className="btn-ghost" onClick={() => { setShowCopyGroups(false); setCopySearch(""); }}>
+                Cancel
               </button>
             </div>
           </div>

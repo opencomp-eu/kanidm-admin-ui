@@ -100,6 +100,19 @@ export async function removeUserFromGroup(
   );
 }
 
+export async function copyGroupsFrom(
+  userId: string,
+  sourceUser: string,
+): Promise<string[]> {
+  return request<string[]>(
+    `/users/${encodeURIComponent(userId)}/copy-groups-from`,
+    {
+      method: "POST",
+      body: JSON.stringify({ source_user: sourceUser }),
+    },
+  );
+}
+
 // Groups
 export async function listGroups(search?: string): Promise<KanidmEntry[]> {
   const params = new URLSearchParams();

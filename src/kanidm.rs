@@ -291,19 +291,20 @@ impl KanidmClient {
     // -- Person groups --
     pub async fn get_person_groups(&self, id: &str) -> Result<Vec<Entry>, AppError> {
         let person = self.get_person(id).await?;
-        let group_names: Vec<String> = person
+        let group_spns: Vec<String> = person
             .attrs
-            .get("group")
+            .get("memberof")
             .cloned()
             .unwrap_or_default();
 
         let mut groups = Vec::new();
-        for name in &group_names {
+        for spn in &group_spns {
+            let name = spn.split('@').next().unwrap_or(spn);
             match self.get_group(name).await {
                 Ok(g) => groups.push(g),
                 Err(_) => {
                     let mut attrs = HashMap::new();
-                    attrs.insert("name".into(), vec![name.clone()]);
+                    attrs.insert("name".into(), vec![name.to_string()]);
                     groups.push(Entry { attrs });
                 }
             }

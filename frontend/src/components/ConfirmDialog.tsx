@@ -1,3 +1,5 @@
+import Modal from "./Modal";
+
 export default function ConfirmDialog({
   open,
   title,
@@ -15,19 +17,16 @@ export default function ConfirmDialog({
 }) {
   if (!open) return null;
   return (
-    <div className="modal-overlay" onClick={onCancel}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2>{title}</h2>
-        <p style={{ color: "var(--text-muted)", fontSize: 14 }}>{message}</p>
-        <div className="modal-actions">
-          <button className="btn-ghost" onClick={onCancel}>
-            Cancel
-          </button>
-          <button className="btn-danger" onClick={onConfirm}>
-            {confirmLabel}
-          </button>
-        </div>
+    <Modal title={title} onClose={onCancel}>
+      <p className="modal-message">{message}</p>
+      <div className="modal-actions">
+        <button className="btn-ghost" onClick={onCancel}>
+          Cancel
+        </button>
+        <button className="btn-danger" onClick={onConfirm}>
+          {confirmLabel}
+        </button>
       </div>
-    </div>
+    </Modal>
   );
 }

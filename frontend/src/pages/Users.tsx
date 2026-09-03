@@ -1,25 +1,19 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { listUsers, createUser, generateResetToken } from "../api";
+import { Link, useNavigate } from "react-router-dom";
+import { listUsers } from "../api";
 import type { KanidmEntry } from "../types";
 import { attrVal, userDisplayName, userStatus } from "../types";
-import { useToast } from "../components/Layout";
+import { usePageTitle } from "../components/Layout";
+import { CreateUserModal } from "../components/UserModals";
 
 export default function Users() {
+  const navigate = useNavigate();
   const [users, setUsers] = useState<KanidmEntry[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showCreate, setShowCreate] = useState(false);
-  const [createForm, setCreateForm] = useState({
-    name: "",
-    displayname: "",
-    mail: "",
-  });
-  const [creating, setCreating] = useState(false);
-  const [resetUrl, setResetUrl] = useState("");
-  const [createdUsername, setCreatedUsername] = useState("");
-  const { addToast } = useToast();
+  usePageTitle("Users");
 
   const load = () => {
     setLoading(true);
@@ -34,45 +28,6 @@ export default function Users() {
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     load();
-  };
-
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setCreating(true);
-    setError("");
-    try {
-      await createUser(createForm);
-      const username = createForm.name;
-      setCreatedUsername(username);
-      setCreateForm({ name: "", displayname: "", mail: "" });
-      load();
-      try {
-        const result = await generateResetToken(username);
-        setResetUrl(result.reset_url);
-      } catch {
-        setShowCreate(false);
-        addToast("User created");
-      }
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const handleCopyResetUrl = async () => {
-    try {
-      await navigator.clipboard.writeText(resetUrl);
-      addToast("Reset URL copied to clipboard");
-    } catch {
-      addToast("Failed to copy", "error");
-    }
-  };
-
-  const handleCloseResetModal = () => {
-    setResetUrl("");
-    setCreatedUsername("");
-    setShowCreate(false);
   };
 
   return (
@@ -97,10 +52,17 @@ export default function Users() {
         </button>
       </div>
 
-      {loading ? (
+      {loading && users.length === 0 ? (
         <div className="loading">Loading...</div>
       ) : users.length === 0 ? (
-        <div className="empty-state">No users found</div>
+        <div className="empty-state">
+          <div>{search ? `No users matching "${search}"` : "No users yet"}</div>
+          <p>
+            {search
+              ? "Try a different search term."
+              : "Click Create User to add the first one."}
+          </p>
+        </div>
       ) : (
         <table>
           <thead>
@@ -113,7 +75,13 @@ export default function Users() {
           </thead>
           <tbody>
             {users.map((u) => (
-              <tr key={attrVal(u, "uuid")} className="user-row">
+              <tr
+                key={attrVal(u, "uuid")}
+                className="row-link"
+                onClick={() =>
+                  navigate(`/users/${encodeURIComponent(attrVal(u, "name"))}`)
+                }
+              >
                 <td>
                   <Link to={`/users/${attrVal(u, "name")}`}>
                     {userDisplayName(u)}
@@ -137,91 +105,7 @@ export default function Users() {
       )}
 
       {showCreate && (
-        <div className="modal-overlay" onClick={handleCloseResetModal}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>Create User</h2>
-            <form onSubmit={handleCreate}>
-              <div className="form-group">
-                <label>Username</label>
-                <input
-                  type="text"
-                  required
-                  value={createForm.name}
-                  onChange={(e) =>
-                    setCreateForm((f) => ({ ...f, name: e.target.value }))
-                  }
-                />
-              </div>
-              <div className="form-group">
-                <label>Display Name</label>
-                <input
-                  type="text"
-                  required
-                  value={createForm.displayname}
-                  onChange={(e) =>
-                    setCreateForm((f) => ({ ...f, displayname: e.target.value }))
-                  }
-                />
-              </div>
-              <div className="form-group">
-                <label>Email</label>
-                <input
-                  type="email"
-                  value={createForm.mail}
-                  onChange={(e) =>
-                    setCreateForm((f) => ({ ...f, mail: e.target.value }))
-                  }
-                />
-              </div>
-              <div className="modal-actions">
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  onClick={handleCloseResetModal}
-                >
-                  Cancel
-                </button>
-                <button type="submit" className="btn-primary" disabled={creating}>
-                  {creating ? "Creating..." : "Create"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {resetUrl && (
-        <div className="modal-overlay" onClick={handleCloseResetModal}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>User Created</h2>
-            <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 12 }}>
-              {createdUsername} has been created. Share this password reset link:
-            </p>
-            <div style={{
-              background: "var(--bg-secondary)",
-              padding: "12px",
-              borderRadius: "6px",
-              fontFamily: "monospace",
-              fontSize: 13,
-              wordBreak: "break-all"
-            }}>
-              {resetUrl}
-            </div>
-            <div style={{ marginTop: 10 }}>
-              <button className="btn-copy" onClick={handleCopyResetUrl}>
-                Copy URL
-              </button>
-            </div>
-            <p style={{ color: "var(--text-muted)", fontSize: 12, marginTop: 8 }}>
-              This token is single-use and expires after 1 hour.
-            </p>
-            <div className="modal-actions">
-              <button className="btn-ghost" onClick={handleCloseResetModal}>
-                Done
-              </button>
-            </div>
-          </div>
-        </div>
+        <CreateUserModal onClose={() => setShowCreate(false)} onCreated={load} />
       )}
     </div>
   );

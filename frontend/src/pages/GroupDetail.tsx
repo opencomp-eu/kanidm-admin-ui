@@ -11,7 +11,8 @@ import {
 import type { KanidmEntry } from "../types";
 import { attrVal, attrVals } from "../types";
 import ConfirmDialog from "../components/ConfirmDialog";
-import { useToast } from "../components/Layout";
+import { useToast, usePageTitle } from "../components/Layout";
+import Modal from "../components/Modal";
 
 export default function GroupDetail() {
   const { addToast } = useToast();
@@ -23,6 +24,8 @@ export default function GroupDetail() {
   const [error, setError] = useState("");
   const [showDelete, setShowDelete] = useState(false);
   const [showAddMember, setShowAddMember] = useState(false);
+
+  usePageTitle(group ? attrVal(group, "name") : "Group");
 
   const load = () => {
     if (!id) return;
@@ -156,9 +159,7 @@ export default function GroupDetail() {
       />
 
       {showAddMember && (
-        <div className="modal-overlay" onClick={() => setShowAddMember(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>Add Member</h2>
+        <Modal title="Add Member" onClose={() => setShowAddMember(false)}>
             {availableUsers.length === 0 ? (
               <p style={{ color: "var(--text-muted)" }}>No more users to add</p>
             ) : (
@@ -172,7 +173,7 @@ export default function GroupDetail() {
                       borderRadius: 6,
                       fontSize: 14,
                     }}
-                    className="user-row"
+                    className="row-link"
                     onClick={() => handleAddMember(attrVal(u, "name"))}
                   >
                     {attrVal(u, "displayname") || attrVal(u, "name")}
@@ -188,8 +189,7 @@ export default function GroupDetail() {
                 Close
               </button>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
     </div>
   );

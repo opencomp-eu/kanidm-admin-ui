@@ -3,7 +3,8 @@ import { listOAuth2Apps, createOAuth2App, deleteOAuth2App } from "../api";
 import type { KanidmEntry } from "../types";
 import { attrVal } from "../types";
 import ConfirmDialog from "../components/ConfirmDialog";
-import { useToast } from "../components/Layout";
+import { useToast, usePageTitle } from "../components/Layout";
+import Modal from "../components/Modal";
 
 export default function OAuthApps() {
   const { addToast } = useToast();
@@ -19,6 +20,8 @@ export default function OAuthApps() {
   });
   const [creating, setCreating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+
+  usePageTitle("OAuth Apps");
 
   const load = () => {
     setLoading(true);
@@ -73,7 +76,10 @@ export default function OAuthApps() {
       {loading ? (
         <div className="loading">Loading...</div>
       ) : apps.length === 0 ? (
-        <div className="empty-state">No OAuth2 applications</div>
+        <div className="empty-state">
+          <div>No OAuth2 applications</div>
+          <p>Click Create App to register your first application.</p>
+        </div>
       ) : (
         <table>
           <thead>
@@ -107,9 +113,7 @@ export default function OAuthApps() {
       )}
 
       {showCreate && (
-        <div className="modal-overlay" onClick={() => setShowCreate(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>Create OAuth2 App</h2>
+        <Modal title="Create OAuth2 App" onClose={() => setShowCreate(false)}>
             <form onSubmit={handleCreate}>
               <div className="form-group">
                 <label>Client ID</label>
@@ -170,8 +174,7 @@ export default function OAuthApps() {
                 </button>
               </div>
             </form>
-          </div>
-        </div>
+        </Modal>
       )}
 
       <ConfirmDialog

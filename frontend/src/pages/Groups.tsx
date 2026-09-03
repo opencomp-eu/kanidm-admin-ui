@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { listGroups, createGroup } from "../api";
 import type { KanidmEntry } from "../types";
 import { attrVal } from "../types";
-import { useToast } from "../components/Layout";
+import { usePageTitle, useToast } from "../components/Layout";
+import Modal from "../components/Modal";
 
 export default function Groups() {
   const { addToast } = useToast();
+  const navigate = useNavigate();
   const [groups, setGroups] = useState<KanidmEntry[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -14,6 +16,7 @@ export default function Groups() {
   const [showCreate, setShowCreate] = useState(false);
   const [createForm, setCreateForm] = useState({ name: "", description: "" });
   const [creating, setCreating] = useState(false);
+  usePageTitle("Groups");
 
   const load = () => {
     setLoading(true);
@@ -69,10 +72,17 @@ export default function Groups() {
         </button>
       </div>
 
-      {loading ? (
+      {loading && groups.length === 0 ? (
         <div className="loading">Loading...</div>
       ) : groups.length === 0 ? (
-        <div className="empty-state">No groups found</div>
+        <div className="empty-state">
+          <div>{search ? `No groups matching "${search}"` : "No groups yet"}</div>
+          <p>
+            {search
+              ? "Try a different search term."
+              : "Click Create Group to add the first one."}
+          </p>
+        </div>
       ) : (
         <table>
           <thead>
@@ -84,7 +94,13 @@ export default function Groups() {
           </thead>
           <tbody>
             {groups.map((g) => (
-              <tr key={attrVal(g, "uuid")}>
+              <tr
+                key={attrVal(g, "uuid")}
+                className="row-link"
+                onClick={() =>
+                  navigate(`/groups/${encodeURIComponent(attrVal(g, "name"))}`)
+                }
+              >
                 <td>
                   <Link to={`/groups/${attrVal(g, "name")}`}>
                     {attrVal(g, "name")}
@@ -101,46 +117,43 @@ export default function Groups() {
       )}
 
       {showCreate && (
-        <div className="modal-overlay" onClick={() => setShowCreate(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>Create Group</h2>
-            <form onSubmit={handleCreate}>
-              <div className="form-group">
-                <label>Name</label>
-                <input
-                  type="text"
-                  required
-                  value={createForm.name}
-                  onChange={(e) =>
-                    setCreateForm((f) => ({ ...f, name: e.target.value }))
-                  }
-                />
-              </div>
-              <div className="form-group">
-                <label>Description</label>
-                <input
-                  type="text"
-                  value={createForm.description}
-                  onChange={(e) =>
-                    setCreateForm((f) => ({ ...f, description: e.target.value }))
-                  }
-                />
-              </div>
-              <div className="modal-actions">
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  onClick={() => setShowCreate(false)}
-                >
-                  Cancel
-                </button>
-                <button type="submit" className="btn-primary" disabled={creating}>
-                  {creating ? "Creating..." : "Create"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <Modal title="Create Group" onClose={() => setShowCreate(false)}>
+          <form onSubmit={handleCreate}>
+            <div className="form-group">
+              <label>Name</label>
+              <input
+                type="text"
+                required
+                value={createForm.name}
+                onChange={(e) =>
+                  setCreateForm((f) => ({ ...f, name: e.target.value }))
+                }
+              />
+            </div>
+            <div className="form-group">
+              <label>Description</label>
+              <input
+                type="text"
+                value={createForm.description}
+                onChange={(e) =>
+                  setCreateForm((f) => ({ ...f, description: e.target.value }))
+                }
+              />
+            </div>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => setShowCreate(false)}
+              >
+                Cancel
+              </button>
+              <button type="submit" className="btn-primary" disabled={creating}>
+                {creating ? "Creating..." : "Create"}
+              </button>
+            </div>
+          </form>
+        </Modal>
       )}
     </div>
   );

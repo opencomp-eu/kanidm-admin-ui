@@ -16,7 +16,9 @@ import {
 import type { KanidmEntry } from "../types";
 import { attrVal, attrVals, userDisplayName, userStatus } from "../types";
 import ConfirmDialog from "../components/ConfirmDialog";
-import { useToast } from "../components/Layout";
+import { useToast, usePageTitle } from "../components/Layout";
+import Modal from "../components/Modal";
+import { ResetLinkModal } from "../components/UserModals";
 
 export default function UserDetail() {
   const { id } = useParams<{ id: string }>();
@@ -34,6 +36,8 @@ export default function UserDetail() {
   const [copying, setCopying] = useState(false);
   const [showSetPassword, setShowSetPassword] = useState(false);
   const [resetUrl, setResetUrl] = useState("");
+
+  usePageTitle(user ? userDisplayName(user) : "User");
 
   const load = () => {
     if (!id) return;
@@ -138,30 +142,18 @@ export default function UserDetail() {
     }
   };
 
-  const handleSetPassword = async () => {
+  const handleGenerateReset = async () => {
     if (!id) return;
+    setShowSetPassword(true);
+    setResetUrl("");
     try {
       const result = await generateResetToken(id);
       setResetUrl(result.reset_url);
     } catch (e) {
+      setShowSetPassword(false);
       setError(String(e));
     }
   };
-
-  const handleCopyResetUrl = async () => {
-    try {
-      await navigator.clipboard.writeText(resetUrl);
-      addToast("Reset URL copied to clipboard");
-    } catch {
-      addToast("Failed to copy", "error");
-    }
-  };
-
-  useEffect(() => {
-    if (showSetPassword && !resetUrl) {
-      handleSetPassword();
-    }
-  }, [showSetPassword, resetUrl]);
 
   if (loading) return <div className="loading">Loading...</div>;
   if (!user) return <div className="error">User not found</div>;
@@ -196,8 +188,8 @@ export default function UserDetail() {
       <div className="card">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <h2 style={{ marginBottom: 0 }}>Account Details</h2>
-          <button className="btn-ghost btn-sm" onClick={() => setShowSetPassword(true)}>
-            Generate Reset Token
+          <button className="btn-ghost btn-sm" onClick={handleGenerateReset}>
+            Generate Reset Link
           </button>
         </div>
         <dl className="detail-grid">
@@ -221,12 +213,14 @@ export default function UserDetail() {
       <div className="card">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <h2 style={{ marginBottom: 0 }}>Group Memberships</h2>
-          <button className="btn-primary btn-sm" onClick={() => setShowAddGroup(true)}>
-            Add to Group
-          </button>
-          <button className="btn-ghost btn-sm" onClick={handleOpenCopyGroups}>
-            Copy Groups From...
-          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn-primary btn-sm" onClick={() => setShowAddGroup(true)}>
+              Add to Group
+            </button>
+            <button className="btn-ghost btn-sm" onClick={handleOpenCopyGroups}>
+              Copy Groups From...
+            </button>
+          </div>
         </div>
         {memberOf.length === 0 ? (
           <div style={{ color: "var(--text-muted)", fontSize: 14 }}>No group memberships</div>
@@ -254,37 +248,35 @@ export default function UserDetail() {
       />
 
       {showAddGroup && (
-        <div className="modal-overlay" onClick={() => setShowAddGroup(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>Add to Group</h2>
-            {availableGroups.length === 0 ? (
-              <p style={{ color: "var(--text-muted)" }}>No more groups to add</p>
-            ) : (
-              <div className="tag-list" style={{ marginTop: 12 }}>
-                {availableGroups.map((g) => (
-                  <button
-                    key={attrVal(g, "name")}
-                    className="tag"
-                    style={{ cursor: "pointer", border: "none" }}
-                    onClick={() => handleAddGroup(attrVal(g, "name"))}
-                  >
-                    {attrVal(g, "name")}
-                  </button>
-                ))}
-              </div>
-            )}
-            <div className="modal-actions">
-              <button className="btn-ghost" onClick={() => setShowAddGroup(false)}>
-                Close
-              </button>
+        <Modal title="Add to Group" onClose={() => setShowAddGroup(false)}>
+          {availableGroups.length === 0 ? (
+            <p className="modal-message">No more groups to add</p>
+          ) : (
+            <div className="tag-list" style={{ marginTop: 12 }}>
+              {availableGroups.map((g) => (
+                <button
+                  key={attrVal(g, "name")}
+                  className="tag"
+                  style={{ cursor: "pointer", border: "none" }}
+                  onClick={() => handleAddGroup(attrVal(g, "name"))}
+                >
+                  {attrVal(g, "name")}
+                </button>
+              ))}
             </div>
+          )}
+          <div className="modal-actions">
+            <button className="btn-ghost" onClick={() => setShowAddGroup(false)}>
+              Close
+            </button>
           </div>
-        </div>
+        </Modal>
       )}
       {showCopyGroups && (
-        <div className="modal-overlay" onClick={() => setShowCopyGroups(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>Copy Groups From User</h2>
+        <Modal
+          title="Copy Groups From User"
+          onClose={() => { setShowCopyGroups(false); setCopySearch(""); }}
+        >
             <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 12 }}>
               Search for a user to copy their group memberships to {attrVal(user, "name")}.
             </p>
@@ -318,49 +310,24 @@ export default function UserDetail() {
                 Cancel
               </button>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
       {showSetPassword && (
-        <div className="modal-overlay" onClick={() => { setShowSetPassword(false); setResetUrl(""); }}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>Credential Reset for {attrVal(user, "name")}</h2>
-            {resetUrl ? (
-              <div style={{ marginTop: 12 }}>
-                <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 8 }}>
-                  Share this link with the user to set their password:
-                </p>
-                <div style={{
-                  background: "var(--bg-secondary)",
-                  padding: "12px",
-                  borderRadius: "6px",
-                  fontFamily: "monospace",
-                  fontSize: 13,
-                  wordBreak: "break-all"
-                }}>
-                  {resetUrl}
-                </div>
-                <div style={{ marginTop: 10 }}>
-                  <button className="btn-copy" onClick={handleCopyResetUrl}>
-                    Copy URL
-                  </button>
-                </div>
-                <p style={{ color: "var(--text-muted)", fontSize: 12, marginTop: 8 }}>
-                  This token is single-use and expires after 1 hour.
-                </p>
-              </div>
-            ) : (
-              <p style={{ color: "var(--text-muted)", marginTop: 12 }}>
-                Generating reset token...
-              </p>
-            )}
-            <div className="modal-actions">
-              <button className="btn-ghost" onClick={() => { setShowSetPassword(false); setResetUrl(""); }}>
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
+        resetUrl ? (
+          <ResetLinkModal
+            title={`Credential Reset for ${attrVal(user, "name")}`}
+            intro="Share this link with the user to set their password:"
+            url={resetUrl}
+            onClose={() => { setShowSetPassword(false); setResetUrl(""); }}
+          />
+        ) : (
+          <Modal
+            title={`Credential Reset for ${attrVal(user, "name")}`}
+            onClose={() => { setShowSetPassword(false); setResetUrl(""); }}
+          >
+            <p className="modal-message">Generating reset link...</p>
+          </Modal>
+        )
       )}
     </div>
   );

@@ -17,6 +17,12 @@ export function useToast() {
   return useContext(ToastContext);
 }
 
+export function usePageTitle(title?: string) {
+  useEffect(() => {
+    document.title = title ? `${title} · Kanidm Admin` : "Kanidm Admin";
+  }, [title]);
+}
+
 export default function Layout() {
   const [user, setUser] = useState<KanidmEntry | null>(null);
   const [loading, setLoading] = useState(true);

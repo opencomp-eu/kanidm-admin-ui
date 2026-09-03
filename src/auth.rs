@@ -327,20 +327,28 @@ pub async fn login_handler(
             }
         };
 
-    let redirect = format!(
-        "{}?response_type=code&scope=openid+email+profile&redirect_uri={}&state={}&nonce={}&code_challenge={}&code_challenge_method=S256",
-        oidc.authorize_url,
-        urlencoding::encode(&oidc.redirect_url),
-        urlencoding::encode(&flow.state),
-        urlencoding::encode(&flow.nonce),
-        urlencoding::encode(&pkce_challenge(&flow.code_verifier)),
-    );
+    let redirect = authorize_redirect(oidc, &flow);
 
     (
         [(axum::http::header::SET_COOKIE, state_cookie)],
         Redirect::to(&redirect),
     )
         .into_response()
+}
+
+/// RFC 6749 §4.1.1: the browser redirect cannot authenticate the client via
+/// Basic auth, so `client_id` is mandatory in the authorization query — Kanidm
+/// rejects the request without it (400 "missing field `client_id`").
+fn authorize_redirect(oidc: &OidcState, flow: &OidcFlow) -> String {
+    format!(
+        "{}?response_type=code&client_id={}&scope=openid+email+profile&redirect_uri={}&state={}&nonce={}&code_challenge={}&code_challenge_method=S256",
+        oidc.authorize_url,
+        urlencoding::encode(&oidc.client_id),
+        urlencoding::encode(&oidc.redirect_url),
+        urlencoding::encode(&flow.state),
+        urlencoding::encode(&flow.nonce),
+        urlencoding::encode(&pkce_challenge(&flow.code_verifier)),
+    )
 }
 
 pub async fn callback_handler(
@@ -666,5 +674,63 @@ mod tests {
                 "should reject issuer {issuer}"
             );
         }
+    }
+
+    #[test]
+    fn authorize_redirect_includes_client_id() {
+        // Regression: v0.1.1 dropped client_id from the authorize redirect and
+        // Kanidm rejected the login with 400 "missing field `client_id`".
+        let config = oidc_test_config("https://idm.example.com/oauth2/openid/kanidm_admin_ui/");
+        let oidc = OidcState::new(&config).unwrap().unwrap();
+        let flow = OidcFlow {
+            state: "flow-state".into(),
+            nonce: "flow-nonce".into(),
+            code_verifier: "flow-verifier".into(),
+            exp: now_unix(),
+        };
+
+        let redirect = authorize_redirect(&oidc, &flow);
+        let (base, query) = redirect.split_once('?').unwrap();
+        assert_eq!(base, "https://idm.example.com/oauth2/authorise");
+        let params: std::collections::HashMap<String, String> = query
+            .split('&')
+            .map(|kv| {
+                let (k, v) = kv.split_once('=').unwrap();
+                // Query strings use form encoding: `+` means space.
+                (
+                    k.to_string(),
+                    urlencoding::decode(&v.replace('+', " "))
+                        .unwrap()
+                        .into_owned(),
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            params.get("response_type").map(String::as_str),
+            Some("code")
+        );
+        assert_eq!(
+            params.get("client_id").map(String::as_str),
+            Some("kanidm_admin_ui")
+        );
+        assert_eq!(
+            params.get("scope").map(String::as_str),
+            Some("openid email profile")
+        );
+        assert_eq!(
+            params.get("redirect_uri").map(String::as_str),
+            Some("https://admin.example.com/api/auth/callback")
+        );
+        assert_eq!(params.get("state").map(String::as_str), Some("flow-state"));
+        assert_eq!(params.get("nonce").map(String::as_str), Some("flow-nonce"));
+        assert_eq!(
+            params.get("code_challenge").map(String::as_str),
+            Some(pkce_challenge("flow-verifier").as_str())
+        );
+        assert_eq!(
+            params.get("code_challenge_method").map(String::as_str),
+            Some("S256")
+        );
     }
 }

@@ -2,6 +2,10 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
+use axum::extract::Request;
+use axum::http::HeaderValue;
+use axum::middleware::{self, Next};
+use axum::response::Response;
 use axum::Router;
 use tokio::net::TcpListener;
 use tower_http::services::{ServeDir, ServeFile};
@@ -62,6 +66,31 @@ CLI flags override the LISTEN_ADDR environment variable."
     );
 }
 
+/// Baseline browser hardening for the SPA and API responses.
+async fn security_headers(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert("X-Frame-Options", HeaderValue::from_static("DENY"));
+    headers.insert(
+        "X-Content-Type-Options",
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert("Referrer-Policy", HeaderValue::from_static("same-origin"));
+    headers.insert(
+        "Strict-Transport-Security",
+        HeaderValue::from_static("max-age=31536000"),
+    );
+    headers.insert(
+        "Content-Security-Policy",
+        HeaderValue::from_static(
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
+             img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; \
+             base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+        ),
+    );
+    response
+}
+
 fn with_port(listen_addr: &str, port: u16) -> Result<String> {
     let host = listen_addr
         .rsplit_once(':')
@@ -113,6 +142,8 @@ async fn main() -> Result<()> {
     } else {
         Router::new().nest("/api", api_routes)
     };
+
+    let app = app.layer(middleware::from_fn(security_headers));
 
     let addr: SocketAddr = config.listen_addr.parse()?;
     tracing::info!("listening on {addr}");

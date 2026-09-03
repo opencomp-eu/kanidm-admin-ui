@@ -5,6 +5,7 @@ pub struct Config {
     pub listen_addr: String,
     pub kanidm_url: String,
     pub kanidm_api_token: String,
+    pub admin_group: String,
     pub oidc_issuer_url: Option<String>,
     pub oidc_client_id: Option<String>,
     pub oidc_client_secret: Option<String>,
@@ -14,24 +15,51 @@ pub struct Config {
 
 impl Config {
     pub fn from_env() -> Result<Self> {
-        Ok(Self {
-            listen_addr: std::env::var("LISTEN_ADDR")
-                .unwrap_or_else(|_| "0.0.0.0:8080".into()),
-            kanidm_url: std::env::var("KANIDM_URL")
-                .context("KANIDM_URL is required")?,
+        let config = Self {
+            listen_addr: std::env::var("LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".into()),
+            kanidm_url: std::env::var("KANIDM_URL").context("KANIDM_URL is required")?,
             kanidm_api_token: std::env::var("KANIDM_API_TOKEN")
                 .context("KANIDM_API_TOKEN is required")?,
+            admin_group: std::env::var("KANIDM_ADMIN_GROUP")
+                .unwrap_or_else(|_| "idm_admins".into()),
             oidc_issuer_url: std::env::var("OIDC_ISSUER_URL").ok(),
             oidc_client_id: std::env::var("OIDC_CLIENT_ID").ok(),
             oidc_client_secret: std::env::var("OIDC_CLIENT_SECRET").ok(),
-            cookie_secret: std::env::var("COOKIE_SECRET")
-                .unwrap_or_else(|_| {
-                    use base64::Engine;
-                    base64::engine::general_purpose::STANDARD.encode(&[0u8; 32])
-                }),
+            cookie_secret: match std::env::var("COOKIE_SECRET") {
+                Ok(s) => s,
+                Err(_) => {
+                    tracing::warn!(
+                        "COOKIE_SECRET not set; using an ephemeral random secret \
+                         (sessions will not survive restarts). Set COOKIE_SECRET to a \
+                         persistent random base64 value in production."
+                    );
+                    generate_cookie_secret()
+                }
+            },
             external_url: std::env::var("EXTERNAL_URL")
                 .unwrap_or_else(|_| "http://localhost:8080".into()),
-        })
+        };
+        config.validate_oidc()?;
+        Ok(config)
+    }
+
+    /// Rejects a partial OIDC configuration: some-but-not-all OIDC variables
+    /// would otherwise silently fall back to passwordless dev mode on a
+    /// deployment that was meant to have OIDC.
+    fn validate_oidc(&self) -> Result<()> {
+        let any_set = self.oidc_issuer_url.is_some()
+            || self.oidc_client_id.is_some()
+            || self.oidc_client_secret.is_some();
+        let all_set = self.oidc_issuer_url.is_some()
+            && self.oidc_client_id.is_some()
+            && self.oidc_client_secret.is_some();
+        if any_set && !all_set {
+            anyhow::bail!(
+                "OIDC is partially configured; set OIDC_ISSUER_URL, OIDC_CLIENT_ID \
+                 and OIDC_CLIENT_SECRET together (or none of them for dev mode)"
+            );
+        }
+        Ok(())
     }
 
     pub fn oidc_enabled(&self) -> bool {
@@ -39,4 +67,14 @@ impl Config {
             && self.oidc_client_id.is_some()
             && self.oidc_client_secret.is_some()
     }
+}
+
+fn generate_cookie_secret() -> String {
+    use base64::Engine;
+    use ring::rand::SecureRandom;
+    let mut key = [0u8; 32];
+    ring::rand::SystemRandom::new()
+        .fill(&mut key)
+        .expect("system RNG failed");
+    base64::engine::general_purpose::STANDARD.encode(key)
 }

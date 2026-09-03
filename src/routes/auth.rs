@@ -9,12 +9,6 @@ pub fn router() -> Router<AppState> {
             "/callback",
             axum::routing::get(crate::auth::callback_handler),
         )
-        .route(
-            "/logout",
-            axum::routing::get(crate::auth::logout_handler),
-        )
-        .route(
-            "/whoami",
-            axum::routing::get(crate::auth::whoami_handler),
-        )
+        .route("/logout", axum::routing::post(crate::auth::logout_handler))
+        .route("/whoami", axum::routing::get(crate::auth::whoami_handler))
 }

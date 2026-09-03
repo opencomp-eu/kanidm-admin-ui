@@ -29,7 +29,7 @@ export async function getWhoami(): Promise<WhoamiResponse> {
 }
 
 export async function logout(): Promise<void> {
-  await request<void>("/auth/logout");
+  await request<void>("/auth/logout", { method: "POST" });
 }
 
 // Users

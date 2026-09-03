@@ -58,6 +58,7 @@ async fn get_user(
     axum::extract::State(state): axum::extract::State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    super::validate_identifier(&id)?;
     let entry = state.kanidm.get_person(&id).await?;
     Ok(Json(entry_to_json(entry)))
 }
@@ -86,6 +87,7 @@ async fn delete_user(
     axum::extract::State(state): axum::extract::State<AppState>,
     Path(id): Path<String>,
 ) -> Result<(), AppError> {
+    super::validate_identifier(&id)?;
     state.kanidm.delete_person(&id).await
 }
 
@@ -94,6 +96,7 @@ async fn disable_user(
     axum::extract::State(state): axum::extract::State<AppState>,
     Path(id): Path<String>,
 ) -> Result<(), AppError> {
+    super::validate_identifier(&id)?;
     state.kanidm.disable_person(&id).await
 }
 
@@ -102,6 +105,7 @@ async fn enable_user(
     axum::extract::State(state): axum::extract::State<AppState>,
     Path(id): Path<String>,
 ) -> Result<(), AppError> {
+    super::validate_identifier(&id)?;
     state.kanidm.enable_person(&id).await
 }
 
@@ -110,6 +114,7 @@ async fn get_user_groups(
     axum::extract::State(state): axum::extract::State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<serde_json::Value>>, AppError> {
+    super::validate_identifier(&id)?;
     let groups = state.kanidm.get_person_groups(&id).await?;
     Ok(Json(groups.into_iter().map(entry_to_json).collect()))
 }
@@ -119,6 +124,8 @@ async fn add_user_to_group(
     axum::extract::State(state): axum::extract::State<AppState>,
     Path((id, group)): Path<(String, String)>,
 ) -> Result<(), AppError> {
+    super::validate_identifier(&id)?;
+    super::validate_identifier(&group)?;
     state.kanidm.add_person_to_group(&id, &group).await
 }
 
@@ -127,6 +134,8 @@ async fn remove_user_from_group(
     axum::extract::State(state): axum::extract::State<AppState>,
     Path((id, group)): Path<(String, String)>,
 ) -> Result<(), AppError> {
+    super::validate_identifier(&id)?;
+    super::validate_identifier(&group)?;
     state.kanidm.remove_person_from_group(&id, &group).await
 }
 
@@ -136,17 +145,25 @@ async fn copy_groups_from(
     Path(id): Path<String>,
     Json(input): Json<CopyGroupsRequest>,
 ) -> Result<Json<Vec<String>>, AppError> {
+    super::validate_identifier(&id)?;
+    super::validate_identifier(&input.source_user)?;
     let source = state.kanidm.get_person(&input.source_user).await?;
-    let group_spns: Vec<String> = source
-        .attrs
-        .get("memberof")
-        .cloned()
-        .unwrap_or_default();
+    let group_spns: Vec<String> = source.attrs.get("memberof").cloned().unwrap_or_default();
 
     let mut added = Vec::new();
     for spn in &group_spns {
         let group_name = spn.split('@').next().unwrap_or(spn);
-        if state.kanidm.add_person_to_group(&id, group_name).await.is_ok() {
+        // Group names come from stored directory data; skip anything that
+        // would not survive URL interpolation.
+        if super::validate_identifier(group_name).is_err() {
+            continue;
+        }
+        if state
+            .kanidm
+            .add_person_to_group(&id, group_name)
+            .await
+            .is_ok()
+        {
             added.push(group_name.to_string());
         }
     }
@@ -159,6 +176,7 @@ async fn set_password(
     Path(id): Path<String>,
     Json(_input): Json<SetPasswordRequest>,
 ) -> Result<Json<ResetTokenResponse>, AppError> {
+    super::validate_identifier(&id)?;
     let reset_url = state.kanidm.generate_reset_token(&id).await?;
     Ok(Json(ResetTokenResponse { reset_url }))
 }

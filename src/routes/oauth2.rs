@@ -1,5 +1,5 @@
 use axum::extract::Path;
-use axum::routing::{get, delete};
+use axum::routing::{delete, get};
 use axum::{Json, Router};
 use serde::Deserialize;
 
@@ -51,6 +51,7 @@ async fn delete_app(
     axum::extract::State(state): axum::extract::State<AppState>,
     Path(rs_name): Path<String>,
 ) -> Result<(), AppError> {
+    super::validate_identifier(&rs_name)?;
     state.kanidm.delete_oauth2(&rs_name).await
 }
 

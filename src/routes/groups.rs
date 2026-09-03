@@ -41,6 +41,7 @@ async fn get_group(
     axum::extract::State(state): axum::extract::State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    super::validate_identifier(&id)?;
     let entry = state.kanidm.get_group(&id).await?;
     Ok(Json(entry_to_json(entry)))
 }
@@ -68,6 +69,7 @@ async fn delete_group(
     axum::extract::State(state): axum::extract::State<AppState>,
     Path(id): Path<String>,
 ) -> Result<(), AppError> {
+    super::validate_identifier(&id)?;
     state.kanidm.delete_group(&id).await
 }
 
@@ -76,6 +78,7 @@ async fn get_group_members(
     axum::extract::State(state): axum::extract::State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<serde_json::Value>>, AppError> {
+    super::validate_identifier(&id)?;
     let members = state.kanidm.get_group_members(&id).await?;
     Ok(Json(members.into_iter().map(entry_to_json).collect()))
 }
@@ -85,6 +88,8 @@ async fn add_member(
     axum::extract::State(state): axum::extract::State<AppState>,
     Path((id, member)): Path<(String, String)>,
 ) -> Result<(), AppError> {
+    super::validate_identifier(&id)?;
+    super::validate_identifier(&member)?;
     state.kanidm.add_group_member(&id, &member).await
 }
 
@@ -93,6 +98,8 @@ async fn remove_member(
     axum::extract::State(state): axum::extract::State<AppState>,
     Path((id, member)): Path<(String, String)>,
 ) -> Result<(), AppError> {
+    super::validate_identifier(&id)?;
+    super::validate_identifier(&member)?;
     state.kanidm.remove_group_member(&id, &member).await
 }
 

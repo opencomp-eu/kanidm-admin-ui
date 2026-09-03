@@ -127,7 +127,6 @@ pub struct KanidmClient {
 impl KanidmClient {
     pub fn new(config: &Config) -> Self {
         let http = HttpClient::builder()
-            .danger_accept_invalid_certs(true)
             .build()
             .expect("failed to build HTTP client");
 
@@ -151,7 +150,11 @@ impl KanidmClient {
             .map_err(|e| AppError::Upstream(e.to_string()))
     }
 
-    async fn post<T: Serialize>(&self, path: &str, body: &T) -> Result<reqwest::Response, AppError> {
+    async fn post<T: Serialize>(
+        &self,
+        path: &str,
+        body: &T,
+    ) -> Result<reqwest::Response, AppError> {
         self.http
             .post(self.url(path))
             .bearer_auth(&self.token)
@@ -161,7 +164,11 @@ impl KanidmClient {
             .map_err(|e| AppError::Upstream(e.to_string()))
     }
 
-    async fn patch<T: Serialize>(&self, path: &str, body: &T) -> Result<reqwest::Response, AppError> {
+    async fn patch<T: Serialize>(
+        &self,
+        path: &str,
+        body: &T,
+    ) -> Result<reqwest::Response, AppError> {
         self.http
             .patch(self.url(path))
             .bearer_auth(&self.token)
@@ -180,7 +187,11 @@ impl KanidmClient {
             .map_err(|e| AppError::Upstream(e.to_string()))
     }
 
-    async fn delete_with_body<T: Serialize>(&self, path: &str, body: &T) -> Result<reqwest::Response, AppError> {
+    async fn delete_with_body<T: Serialize>(
+        &self,
+        path: &str,
+        body: &T,
+    ) -> Result<reqwest::Response, AppError> {
         self.http
             .delete(self.url(path))
             .bearer_auth(&self.token)
@@ -216,13 +227,17 @@ impl KanidmClient {
     // -- Whoami --
     pub async fn whoami(&self) -> Result<WhoamiResponse, AppError> {
         let resp = Self::check_response(self.get("/v1/self").await?).await?;
-        resp.json().await.map_err(|e| AppError::Upstream(e.to_string()))
+        resp.json()
+            .await
+            .map_err(|e| AppError::Upstream(e.to_string()))
     }
 
     // -- Persons --
     pub async fn list_persons(&self) -> Result<Vec<Entry>, AppError> {
         let resp = Self::check_response(self.get("/v1/person").await?).await?;
-        resp.json().await.map_err(|e| AppError::Upstream(e.to_string()))
+        resp.json()
+            .await
+            .map_err(|e| AppError::Upstream(e.to_string()))
     }
 
     pub async fn search_persons(&self, query: &str) -> Result<Vec<Entry>, AppError> {
@@ -233,13 +248,18 @@ impl KanidmClient {
         ]);
         let body = SearchRequest { filter };
         let resp = Self::check_response(self.post("/v1/person/_search", &body).await?).await?;
-        let sr: SearchResponse = resp.json().await.map_err(|e| AppError::Upstream(e.to_string()))?;
+        let sr: SearchResponse = resp
+            .json()
+            .await
+            .map_err(|e| AppError::Upstream(e.to_string()))?;
         Ok(sr.entries)
     }
 
     pub async fn get_person(&self, id: &str) -> Result<Entry, AppError> {
         let resp = Self::check_response(self.get(&format!("/v1/person/{id}")).await?).await?;
-        resp.json().await.map_err(|e| AppError::Upstream(e.to_string()))
+        resp.json()
+            .await
+            .map_err(|e| AppError::Upstream(e.to_string()))
     }
 
     pub async fn create_person(
@@ -278,7 +298,8 @@ impl KanidmClient {
             },
         };
 
-        let resp = Self::check_response(self.patch(&format!("/v1/person/{id}"), &body).await?).await?;
+        let resp =
+            Self::check_response(self.patch(&format!("/v1/person/{id}"), &body).await?).await?;
         let _ = resp.text().await;
         Ok(())
     }
@@ -294,11 +315,7 @@ impl KanidmClient {
     // -- Person groups --
     pub async fn get_person_groups(&self, id: &str) -> Result<Vec<Entry>, AppError> {
         let person = self.get_person(id).await?;
-        let group_spns: Vec<String> = person
-            .attrs
-            .get("memberof")
-            .cloned()
-            .unwrap_or_default();
+        let group_spns: Vec<String> = person.attrs.get("memberof").cloned().unwrap_or_default();
 
         let mut groups = Vec::new();
         for spn in &group_spns {
@@ -315,6 +332,16 @@ impl KanidmClient {
         Ok(groups)
     }
 
+    /// Returns true when the person's `memberof` contains the given group
+    /// (matched on the SPN local part, e.g. `idm_admins@domain`).
+    pub async fn person_is_member_of(&self, id: &str, group: &str) -> Result<bool, AppError> {
+        let person = self.get_person(id).await?;
+        let memberof = person.attrs.get("memberof").cloned().unwrap_or_default();
+        Ok(memberof
+            .iter()
+            .any(|spn| spn.split('@').next() == Some(group)))
+    }
+
     pub async fn add_person_to_group(
         &self,
         person_id: &str,
@@ -322,8 +349,10 @@ impl KanidmClient {
     ) -> Result<(), AppError> {
         let body = vec![person_id.to_string()];
         let resp = Self::check_response(
-            self.post(&format!("/v1/group/{group_id}/_attr/member"), &body).await?
-        ).await?;
+            self.post(&format!("/v1/group/{group_id}/_attr/member"), &body)
+                .await?,
+        )
+        .await?;
         let _ = resp.text().await;
         Ok(())
     }
@@ -335,27 +364,33 @@ impl KanidmClient {
     ) -> Result<(), AppError> {
         let body = vec![person_id.to_string()];
         let resp = Self::check_response(
-            self.delete_with_body(&format!("/v1/group/{group_id}/_attr/member"), &body).await?
-        ).await?;
+            self.delete_with_body(&format!("/v1/group/{group_id}/_attr/member"), &body)
+                .await?,
+        )
+        .await?;
         let _ = resp.text().await;
         Ok(())
     }
 
     // -- Credentials --
-    pub async fn generate_reset_token(
-        &self,
-        person_id: &str,
-    ) -> Result<String, AppError> {
+    pub async fn generate_reset_token(&self, person_id: &str) -> Result<String, AppError> {
         // Generate a reset token that the user can use to set their own password.
         let resp = Self::check_response(
-            self.get(&format!("/v1/person/{person_id}/_credential/_update_intent")).await?
-        ).await?;
-        let intent: serde_json::Value = resp.json().await
+            self.get(&format!(
+                "/v1/person/{person_id}/_credential/_update_intent"
+            ))
+            .await?,
+        )
+        .await?;
+        let intent: serde_json::Value = resp
+            .json()
+            .await
             .map_err(|e| AppError::Upstream(format!("failed to get reset token: {e}")))?;
-        
-        let token = intent["token"].as_str()
+
+        let token = intent["token"]
+            .as_str()
             .ok_or_else(|| AppError::Upstream("missing token in response".into()))?;
-        
+
         // Return the reset URL using the Kanidm server URL
         Ok(format!("{}/ui/reset?token={token}", self.base_url))
     }
@@ -363,7 +398,9 @@ impl KanidmClient {
     // -- Groups --
     pub async fn list_groups(&self) -> Result<Vec<Entry>, AppError> {
         let resp = Self::check_response(self.get("/v1/group").await?).await?;
-        resp.json().await.map_err(|e| AppError::Upstream(e.to_string()))
+        resp.json()
+            .await
+            .map_err(|e| AppError::Upstream(e.to_string()))
     }
 
     pub async fn search_groups(&self, query: &str) -> Result<Vec<Entry>, AppError> {
@@ -373,13 +410,18 @@ impl KanidmClient {
         ]);
         let body = SearchRequest { filter };
         let resp = Self::check_response(self.post("/v1/group/_search", &body).await?).await?;
-        let sr: SearchResponse = resp.json().await.map_err(|e| AppError::Upstream(e.to_string()))?;
+        let sr: SearchResponse = resp
+            .json()
+            .await
+            .map_err(|e| AppError::Upstream(e.to_string()))?;
         Ok(sr.entries)
     }
 
     pub async fn get_group(&self, id: &str) -> Result<Entry, AppError> {
         let resp = Self::check_response(self.get(&format!("/v1/group/{id}")).await?).await?;
-        resp.json().await.map_err(|e| AppError::Upstream(e.to_string()))
+        resp.json()
+            .await
+            .map_err(|e| AppError::Upstream(e.to_string()))
     }
 
     pub async fn create_group(
@@ -411,11 +453,7 @@ impl KanidmClient {
     // -- Group members --
     pub async fn get_group_members(&self, id: &str) -> Result<Vec<Entry>, AppError> {
         let group = self.get_group(id).await?;
-        let member_names: Vec<String> = group
-            .attrs
-            .get("member")
-            .cloned()
-            .unwrap_or_default();
+        let member_names: Vec<String> = group.attrs.get("member").cloned().unwrap_or_default();
 
         let mut members = Vec::new();
         for name in &member_names {
@@ -431,15 +469,13 @@ impl KanidmClient {
         Ok(members)
     }
 
-    pub async fn add_group_member(
-        &self,
-        group_id: &str,
-        person_id: &str,
-    ) -> Result<(), AppError> {
+    pub async fn add_group_member(&self, group_id: &str, person_id: &str) -> Result<(), AppError> {
         let body = vec![person_id.to_string()];
         let resp = Self::check_response(
-            self.post(&format!("/v1/group/{group_id}/_attr/member"), &body).await?
-        ).await?;
+            self.post(&format!("/v1/group/{group_id}/_attr/member"), &body)
+                .await?,
+        )
+        .await?;
         let _ = resp.text().await;
         Ok(())
     }
@@ -451,8 +487,10 @@ impl KanidmClient {
     ) -> Result<(), AppError> {
         let body = vec![person_id.to_string()];
         let resp = Self::check_response(
-            self.delete_with_body(&format!("/v1/group/{group_id}/_attr/member"), &body).await?
-        ).await?;
+            self.delete_with_body(&format!("/v1/group/{group_id}/_attr/member"), &body)
+                .await?,
+        )
+        .await?;
         let _ = resp.text().await;
         Ok(())
     }
@@ -460,7 +498,9 @@ impl KanidmClient {
     // -- OAuth2 --
     pub async fn list_oauth2(&self) -> Result<Vec<Entry>, AppError> {
         let resp = Self::check_response(self.get("/v1/oauth2").await?).await?;
-        resp.json().await.map_err(|e| AppError::Upstream(e.to_string()))
+        resp.json()
+            .await
+            .map_err(|e| AppError::Upstream(e.to_string()))
     }
 
     pub async fn create_oauth2_basic(
@@ -484,9 +524,8 @@ impl KanidmClient {
     }
 
     pub async fn delete_oauth2(&self, rs_name: &str) -> Result<(), AppError> {
-        let resp = Self::check_response(
-            self.delete(&format!("/v1/oauth2/{rs_name}")).await?
-        ).await?;
+        let resp =
+            Self::check_response(self.delete(&format!("/v1/oauth2/{rs_name}")).await?).await?;
         let _ = resp.text().await;
         Ok(())
     }

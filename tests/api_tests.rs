@@ -8,6 +8,8 @@ mod tests {
         Config {
             listen_addr: "127.0.0.1:8080".into(),
             kanidm_url: "https://localhost:8443".into(),
+            kanidm_public_url: "https://localhost:8443".into(),
+            kanidm_tls_ca_file: None,
             kanidm_api_token: "test_token".into(),
             admin_group: "idm_admins".into(),
             oidc_issuer_url: None,
@@ -85,7 +87,8 @@ mod tests {
     #[test]
     fn test_config_oidc_enabled() {
         let mut config = test_config();
-        config.oidc_issuer_url = Some("https://kanidm.example.com".into());
+        config.oidc_issuer_url =
+            Some("https://kanidm.example.com/oauth2/openid/kanidm_admin_ui".into());
         config.oidc_client_id = Some("client_id".into());
         config.oidc_client_secret = Some("secret".into());
         assert!(config.oidc_enabled());
@@ -94,7 +97,7 @@ mod tests {
     #[test]
     fn test_client_creation() {
         let config = test_config();
-        let _client = KanidmClient::new(&config);
+        KanidmClient::new(&config).unwrap();
     }
 
     #[test]

@@ -97,11 +97,13 @@ function userStatus(entry): string        // "active" | "disabled" | "unknown"
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `KANIDM_URL` | Yes | Kanidm server URL |
+| `KANIDM_PUBLIC_URL` | No | Browser-facing Kanidm URL for reset links (default: `KANIDM_URL`) |
+| `KANIDM_TLS_CA_FILE` | No | PEM CA file to trust for self-signed Kanidm certs |
 | `KANIDM_API_TOKEN` | Yes | Service account API token |
 | `LISTEN_ADDR` | No | Backend listen address (default: `0.0.0.0:8080`) |
 | `EXTERNAL_URL` | No | Public URL (default: `http://localhost:8080`) |
 | `COOKIE_SECRET` | No | AES-256 key (base64) |
-| `OIDC_ISSUER_URL` | No | Enable OIDC auth |
+| `OIDC_ISSUER_URL` | No | Per-client issuer `https://<origin>/oauth2/openid/<client_id>` (validated at startup) |
 | `OIDC_CLIENT_ID` | No | OAuth2 client ID |
 | `OIDC_CLIENT_SECRET` | No | OAuth2 client secret |
 

@@ -67,11 +67,21 @@ Save the generated token — it won't be shown again.
 
 ```bash
 kanidm oauth2 create_basic kanidm_admin_ui "Kanidm Admin UI" \
-  http://localhost:8080 \
-  http://localhost:8080/api/auth/callback
+  http://localhost:8080
 
 kanidm oauth2 update_scope_map kanidm_admin_ui idm_admin openid profile email
 ```
+
+Configure the admin UI with the **per-client OIDC issuer**:
+
+```
+OIDC_ISSUER_URL=https://<kanidm-origin>/oauth2/openid/kanidm_admin_ui
+```
+
+e.g. `https://kanidm.example.com:8443/oauth2/openid/kanidm_admin_ui`. The
+backend validates this shape at startup — it must match Kanidm's per-client
+issuer exactly, since it is checked against the `iss` claim of returned
+id_tokens.
 
 ## Required Environment Variables
 
@@ -79,10 +89,12 @@ kanidm oauth2 update_scope_map kanidm_admin_ui idm_admin openid profile email
 |---|---|---|
 | `KANIDM_URL` | Yes | Kanidm server URL (e.g. `https://kanidm.example.com:8443`) |
 | `KANIDM_API_TOKEN` | Yes | Service account API token |
+| `KANIDM_PUBLIC_URL` | No | Browser-facing Kanidm URL for user-facing links such as password resets (defaults to `KANIDM_URL`) |
+| `KANIDM_TLS_CA_FILE` | No | PEM file with a CA certificate to trust in addition to public roots (for self-signed Kanidm certs) |
 | `EXTERNAL_URL` | Yes | Public URL of this admin UI (for OIDC callback) |
 | `LISTEN_ADDR` | No | Listen address (default: `0.0.0.0:8080`) |
 | `COOKIE_SECRET` | No | Base64-encoded 32-byte secret for session encryption |
-| `OIDC_ISSUER_URL` | No | Kanidm OAuth2 issuer URL |
+| `OIDC_ISSUER_URL` | No | Kanidm per-client OIDC issuer: `https://<kanidm-origin>/oauth2/openid/<client_id>` |
 | `OIDC_CLIENT_ID` | No | OAuth2 client ID |
 | `OIDC_CLIENT_SECRET` | No | OAuth2 client secret |
 
@@ -167,7 +179,7 @@ docker run -d \
   -e KANIDM_URL=https://kanidm.example.com:8443 \
   -e KANIDM_API_TOKEN=your_token_here \
   -e EXTERNAL_URL=https://admin.example.com \
-  -e OIDC_ISSUER_URL=https://kanidm.example.com:8443/oauth2/openid/ \
+  -e OIDC_ISSUER_URL=https://kanidm.example.com:8443/oauth2/openid/kanidm_admin_ui \
   -e OIDC_CLIENT_ID=kanidm_admin_ui \
   -e OIDC_CLIENT_SECRET=your_secret_here \
   kanidm-admin-ui
@@ -205,7 +217,7 @@ All routes are prefixed with `/api`:
 |---|---|---|
 | GET | `/api/auth/login` | Initiate OIDC login (or dev login) |
 | GET | `/api/auth/callback` | OIDC callback |
-| GET | `/api/auth/logout` | Clear session |
+| POST | `/api/auth/logout` | Clear session |
 | GET | `/api/auth/whoami` | Current user info |
 | GET | `/api/users` | List users (optional `?q=search`) |
 | POST | `/api/users` | Create user |

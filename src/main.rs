@@ -120,8 +120,8 @@ async fn main() -> Result<()> {
     if let Some(port) = cli.port {
         config.listen_addr = with_port(&config.listen_addr, port)?;
     }
-    let kanidm = KanidmClient::new(&config);
-    let oidc = auth::OidcState::new(&config).await?;
+    let kanidm = KanidmClient::new(&config)?;
+    let oidc = auth::OidcState::new(&config)?;
 
     let state = AppState {
         kanidm,

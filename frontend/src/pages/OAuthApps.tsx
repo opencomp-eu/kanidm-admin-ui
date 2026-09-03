@@ -16,7 +16,6 @@ export default function OAuthApps() {
     name: "",
     displayname: "",
     origin: "",
-    redirect_uri: "",
   });
   const [creating, setCreating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
@@ -40,7 +39,7 @@ export default function OAuthApps() {
     try {
       await createOAuth2App(createForm);
       setShowCreate(false);
-      setCreateForm({ name: "", displayname: "", origin: "", redirect_uri: "" });
+      setCreateForm({ name: "", displayname: "", origin: "" });
       addToast("OAuth2 app created");
       load();
     } catch (e) {
@@ -146,18 +145,6 @@ export default function OAuthApps() {
                   value={createForm.origin}
                   onChange={(e) =>
                     setCreateForm((f) => ({ ...f, origin: e.target.value }))
-                  }
-                />
-              </div>
-              <div className="form-group">
-                <label>Redirect URI</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="https://app.example.com/callback"
-                  value={createForm.redirect_uri}
-                  onChange={(e) =>
-                    setCreateForm((f) => ({ ...f, redirect_uri: e.target.value }))
                   }
                 />
               </div>

@@ -21,14 +21,22 @@ const OIDC_STATE_TTL: Duration = Duration::from_secs(600);
 
 #[derive(Clone)]
 pub struct OidcState {
+    /// Kanidm's per-client OIDC issuer, e.g.
+    /// `https://idm.example.com/oauth2/openid/<client_id>`. This is exactly
+    /// the value of the id_token `iss` claim.
     pub issuer_url: String,
+    pub authorize_url: String,
+    pub token_url: String,
     pub client_id: String,
     pub client_secret: String,
     pub redirect_url: String,
+    /// Client for the token exchange; built with the same TLS trust store as
+    /// the Kanidm API client so KANIDM_TLS_CA_FILE covers both.
+    pub http: reqwest::Client,
 }
 
 impl OidcState {
-    pub async fn new(config: &Config) -> Result<Option<Self>> {
+    pub fn new(config: &Config) -> Result<Option<Self>> {
         if !config.oidc_enabled() {
             tracing::warn!(
                 "OIDC not configured; DEV AUTH MODE is active: anyone who can reach \
@@ -37,15 +45,52 @@ impl OidcState {
             return Ok(None);
         }
 
+        let issuer_url = config
+            .oidc_issuer_url
+            .clone()
+            .context("OIDC_ISSUER_URL")?
+            .trim_end_matches('/')
+            .to_string();
+        let client_id = config.oidc_client_id.clone().context("OIDC_CLIENT_ID")?;
+        let client_secret = config
+            .oidc_client_secret
+            .clone()
+            .context("OIDC_CLIENT_SECRET")?;
+
+        // Kanidm's per-client issuer is always <origin>/oauth2/openid/<client_id>
+        // and the browser-facing endpoints live on that origin. Rejecting other
+        // shapes at startup prevents hard-to-debug login failures later.
+        let origin = url_origin(&issuer_url).to_string();
+        let expected_issuer = format!("{origin}/oauth2/openid/{client_id}");
+        if issuer_url != expected_issuer {
+            anyhow::bail!(
+                "OIDC_ISSUER_URL must be the Kanidm per-client issuer for this client: \
+                 expected {expected_issuer}, got {}",
+                config.oidc_issuer_url.as_deref().unwrap_or("")
+            );
+        }
+
         Ok(Some(Self {
-            issuer_url: config.oidc_issuer_url.clone().context("OIDC_ISSUER_URL")?,
-            client_id: config.oidc_client_id.clone().context("OIDC_CLIENT_ID")?,
-            client_secret: config
-                .oidc_client_secret
-                .clone()
-                .context("OIDC_CLIENT_SECRET")?,
+            issuer_url,
+            authorize_url: format!("{origin}/oauth2/authorise"),
+            token_url: format!("{origin}/oauth2/token"),
+            client_id,
+            client_secret,
             redirect_url: format!("{}/api/auth/callback", config.external_url),
+            http: crate::kanidm::build_kanidm_http_client(config)?,
         }))
+    }
+}
+
+/// Origin (scheme://host[:port]) of a URL: everything up to the path.
+fn url_origin(url: &str) -> &str {
+    match url.split_once("://") {
+        Some((scheme, rest)) => match rest.find('/') {
+            Some(i) => &url[..scheme.len() + 3 + i],
+            None => url,
+        },
+        // Malformed issuer URLs fail the per-client issuer check above.
+        None => url,
     }
 }
 
@@ -283,9 +328,8 @@ pub async fn login_handler(
         };
 
     let redirect = format!(
-        "{}/oauth2/openid/{}/authorize?response_type=code&scope=openid+email+profile&redirect_uri={}&state={}&nonce={}&code_challenge={}&code_challenge_method=S256",
-        oidc.issuer_url,
-        oidc.client_id,
+        "{}?response_type=code&scope=openid+email+profile&redirect_uri={}&state={}&nonce={}&code_challenge={}&code_challenge_method=S256",
+        oidc.authorize_url,
         urlencoding::encode(&oidc.redirect_url),
         urlencoding::encode(&flow.state),
         urlencoding::encode(&flow.nonce),
@@ -343,15 +387,9 @@ pub async fn callback_handler(
         .get("code")
         .ok_or_else(|| AppError::BadRequest("missing authorization code".into()))?;
 
-    let client = reqwest::Client::builder()
-        .build()
-        .map_err(|e| AppError::Internal(e.into()))?;
-
-    let token_resp = client
-        .post(format!(
-            "{}/oauth2/openid/{}/token",
-            oidc.issuer_url, oidc.client_id
-        ))
+    let token_resp = oidc
+        .http
+        .post(&oidc.token_url)
         .form(&[
             ("grant_type", "authorization_code"),
             ("code", code.as_str()),
@@ -567,5 +605,66 @@ mod tests {
             session_from_headers(&headers, SECRET).unwrap().user_id,
             "alice"
         );
+    }
+
+    fn oidc_test_config(issuer: &str) -> Config {
+        Config {
+            listen_addr: "127.0.0.1:8080".into(),
+            kanidm_url: "https://kanidm.internal:8443".into(),
+            kanidm_public_url: "https://idm.example.com".into(),
+            kanidm_api_token: "token".into(),
+            kanidm_tls_ca_file: None,
+            admin_group: "idm_admins".into(),
+            oidc_issuer_url: Some(issuer.into()),
+            oidc_client_id: Some("kanidm_admin_ui".into()),
+            oidc_client_secret: Some("secret".into()),
+            cookie_secret: SECRET.into(),
+            external_url: "https://admin.example.com".into(),
+        }
+    }
+
+    #[test]
+    fn url_origin_extracts_scheme_and_host() {
+        assert_eq!(
+            url_origin("https://idm.example.com/oauth2/openid/app"),
+            "https://idm.example.com"
+        );
+        assert_eq!(
+            url_origin("https://idm.example.com:8443/oauth2/openid/app"),
+            "https://idm.example.com:8443"
+        );
+        assert_eq!(
+            url_origin("https://idm.example.com"),
+            "https://idm.example.com"
+        );
+    }
+
+    #[test]
+    fn oidc_state_builds_kanidm_endpoints_from_per_client_issuer() {
+        let config = oidc_test_config("https://idm.example.com/oauth2/openid/kanidm_admin_ui/");
+        let oidc = OidcState::new(&config).unwrap().unwrap();
+        assert_eq!(
+            oidc.issuer_url,
+            "https://idm.example.com/oauth2/openid/kanidm_admin_ui"
+        );
+        assert_eq!(
+            oidc.authorize_url,
+            "https://idm.example.com/oauth2/authorise"
+        );
+        assert_eq!(oidc.token_url, "https://idm.example.com/oauth2/token");
+    }
+
+    #[test]
+    fn oidc_state_rejects_wrong_issuer_shape() {
+        for issuer in [
+            "https://idm.example.com",
+            "https://idm.example.com/oauth2/openid/",
+            "https://idm.example.com/oauth2/openid/other_client",
+        ] {
+            assert!(
+                OidcState::new(&oidc_test_config(issuer)).is_err(),
+                "should reject issuer {issuer}"
+            );
+        }
     }
 }

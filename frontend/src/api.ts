@@ -193,7 +193,6 @@ export async function createOAuth2App(data: {
   name: string;
   displayname: string;
   origin: string;
-  redirect_uri: string;
   scope_maps?: Record<string, string[]>;
 }): Promise<KanidmEntry> {
   return request<KanidmEntry>("/oauth2", {

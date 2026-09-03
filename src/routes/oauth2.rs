@@ -26,7 +26,6 @@ pub struct CreateOAuth2Request {
     name: String,
     displayname: String,
     origin: String,
-    redirect_uri: String,
 }
 
 async fn create_app(
@@ -36,12 +35,7 @@ async fn create_app(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let entry = state
         .kanidm
-        .create_oauth2_basic(
-            &input.name,
-            &input.displayname,
-            &input.origin,
-            &input.redirect_uri,
-        )
+        .create_oauth2_basic(&input.name, &input.displayname, &input.origin)
         .await?;
     Ok(Json(entry_to_json(entry)))
 }

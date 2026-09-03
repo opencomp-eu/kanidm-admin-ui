@@ -6,6 +6,24 @@ use std::collections::HashMap;
 use crate::config::Config;
 use crate::error::AppError;
 
+/// Shared reqwest client for all Kanidm traffic (API and OIDC token exchange).
+/// Trusts the CA at KANIDM_TLS_CA_FILE on top of the built-in public roots, so
+/// Kanidm deployments with a private/self-signed certificate work without
+/// disabling certificate verification.
+pub fn build_kanidm_http_client(config: &Config) -> Result<HttpClient> {
+    let mut builder = HttpClient::builder();
+    if let Some(path) = &config.kanidm_tls_ca_file {
+        let pem = std::fs::read_to_string(path)
+            .with_context(|| format!("failed to read KANIDM_TLS_CA_FILE {path}"))?;
+        let cert = reqwest::Certificate::from_pem(pem.as_bytes())
+            .with_context(|| format!("invalid PEM in KANIDM_TLS_CA_FILE {path}"))?;
+        builder = builder.add_root_certificate(cert);
+    }
+    builder
+        .build()
+        .context("failed to build Kanidm HTTP client")
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Entry {
     pub attrs: HashMap<String, Vec<String>>,
@@ -121,20 +139,20 @@ pub struct ApiToken {
 pub struct KanidmClient {
     http: HttpClient,
     base_url: String,
+    /// Browser-facing Kanidm origin for user-facing links (password reset),
+    /// which may differ from the internal `base_url`.
+    public_url: String,
     token: String,
 }
 
 impl KanidmClient {
-    pub fn new(config: &Config) -> Self {
-        let http = HttpClient::builder()
-            .build()
-            .expect("failed to build HTTP client");
-
-        Self {
-            http,
+    pub fn new(config: &Config) -> Result<Self> {
+        Ok(Self {
+            http: build_kanidm_http_client(config)?,
             base_url: config.kanidm_url.trim_end_matches('/').into(),
+            public_url: config.kanidm_public_url.trim_end_matches('/').into(),
             token: config.kanidm_api_token.clone(),
-        }
+        })
     }
 
     fn url(&self, path: &str) -> String {
@@ -391,8 +409,9 @@ impl KanidmClient {
             .as_str()
             .ok_or_else(|| AppError::Upstream("missing token in response".into()))?;
 
-        // Return the reset URL using the Kanidm server URL
-        Ok(format!("{}/ui/reset?token={token}", self.base_url))
+        // Link must open in the user's browser, so use the public origin even
+        // when KANIDM_URL points at an internal address.
+        Ok(format!("{}/ui/reset?token={token}", self.public_url))
     }
 
     // -- Groups --
@@ -508,19 +527,11 @@ impl KanidmClient {
         name: &str,
         displayname: &str,
         origin: &str,
-        redirect_uri: &str,
     ) -> Result<Entry, AppError> {
-        let mut attrs = HashMap::new();
-        attrs.insert("name".to_string(), vec![name.to_string()]);
-        attrs.insert("displayname".to_string(), vec![displayname.to_string()]);
-        attrs.insert("origin".to_string(), vec![origin.to_string()]);
-        attrs.insert("redirect_uri".to_string(), vec![redirect_uri.to_string()]);
-
-        let body = Entry { attrs };
-
+        let body = oauth2_basic_entry(name, displayname, origin);
         let resp = Self::check_response(self.post("/v1/oauth2/_basic", &body).await?).await?;
         let _ = resp.text().await;
-        Ok(Entry { attrs: body.attrs })
+        Ok(body)
     }
 
     pub async fn delete_oauth2(&self, rs_name: &str) -> Result<(), AppError> {
@@ -528,5 +539,30 @@ impl KanidmClient {
             Self::check_response(self.delete(&format!("/v1/oauth2/{rs_name}")).await?).await?;
         let _ = resp.text().await;
         Ok(())
+    }
+}
+
+/// Kanidm OAuth2 resource servers have no `redirect_uri` attribute — redirect
+/// URLs are validated against the `origin` attribute — and Kanidm rejects
+/// entries containing unknown attributes.
+fn oauth2_basic_entry(name: &str, displayname: &str, origin: &str) -> Entry {
+    let mut attrs = HashMap::new();
+    attrs.insert("name".to_string(), vec![name.to_string()]);
+    attrs.insert("displayname".to_string(), vec![displayname.to_string()]);
+    attrs.insert("origin".to_string(), vec![origin.to_string()]);
+    Entry { attrs }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn oauth2_basic_entry_has_only_valid_attributes() {
+        let entry = oauth2_basic_entry("app", "My App", "https://app.example.com");
+        let mut keys: Vec<_> = entry.attrs.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(keys, ["displayname", "name", "origin"]);
+        assert_eq!(entry.attrs["origin"], ["https://app.example.com"]);
     }
 }

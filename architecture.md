@@ -146,3 +146,8 @@ function userStatus(entry): string        // "active" | "disabled" | "unknown"
 - **Group memberships** use `memberof` attribute (SPN format: `name@domain`) — strip `@domain` for API calls
 - **Passwords** can't be set directly — use `_credential/_update_intent` to generate reset token
 - **Status** attribute only present when disabled — active accounts have no `status` field
+- **OIDC endpoints are read from discovery, never pinned** — `OidcState::new` fetches
+  `{issuer}/.well-known/openid-configuration` at startup and uses its `authorization_endpoint`
+  (Kanidm: `/ui/oauth2`, the browser SPA) and `token_endpoint`. `/oauth2/authorise` is the JSON
+  API behind the SPA and answers session-less browsers with a bare 401, so it must never be used
+  as a redirect target.

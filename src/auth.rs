@@ -25,6 +25,9 @@ pub struct OidcState {
     /// `https://idm.example.com/oauth2/openid/<client_id>`. This is exactly
     /// the value of the id_token `iss` claim.
     pub issuer_url: String,
+    /// Browser redirect target and token exchange URL, resolved from the
+    /// provider's discovery document at startup (on Kanidm: /ui/oauth2 and
+    /// /oauth2/token).
     pub authorize_url: String,
     pub token_url: String,
     pub client_id: String,
@@ -36,7 +39,7 @@ pub struct OidcState {
 }
 
 impl OidcState {
-    pub fn new(config: &Config) -> Result<Option<Self>> {
+    pub async fn new(config: &Config) -> Result<Option<Self>> {
         if !config.oidc_enabled() {
             tracing::warn!(
                 "OIDC not configured; DEV AUTH MODE is active: anyone who can reach \
@@ -57,9 +60,9 @@ impl OidcState {
             .clone()
             .context("OIDC_CLIENT_SECRET")?;
 
-        // Kanidm's per-client issuer is always <origin>/oauth2/openid/<client_id>
-        // and the browser-facing endpoints live on that origin. Rejecting other
-        // shapes at startup prevents hard-to-debug login failures later.
+        // Kanidm's per-client issuer is always <origin>/oauth2/openid/<client_id>.
+        // Rejecting other shapes at startup prevents hard-to-debug login
+        // failures later.
         let origin = url_origin(&issuer_url).to_string();
         let expected_issuer = format!("{origin}/oauth2/openid/{client_id}");
         if issuer_url != expected_issuer {
@@ -70,14 +73,56 @@ impl OidcState {
             );
         }
 
+        let http = crate::kanidm::build_kanidm_http_client(config)?;
+
+        // Read the endpoints from discovery instead of pinning paths: on
+        // Kanidm the browser-facing authorization endpoint is /ui/oauth2 (an
+        // SPA that walks the user through login and consent), while
+        // /oauth2/authorise is the JSON API behind it and answers session-less
+        // browsers with a bare 401 instead of a redirect to a login page.
+        let discovery_url = format!("{issuer_url}/.well-known/openid-configuration");
+        let discovery: serde_json::Value = http
+            .get(&discovery_url)
+            .send()
+            .await
+            .with_context(|| format!("failed to reach OIDC discovery endpoint {discovery_url}"))?
+            .error_for_status()
+            .with_context(|| format!("OIDC discovery endpoint {discovery_url} returned an error"))?
+            .json()
+            .await
+            .with_context(|| {
+                format!("failed to parse OIDC discovery document from {discovery_url}")
+            })?;
+
+        let advertised_issuer = discovery["issuer"]
+            .as_str()
+            .context("OIDC discovery document is missing the issuer field")?
+            .trim_end_matches('/');
+        if advertised_issuer != issuer_url {
+            anyhow::bail!(
+                "OIDC discovery issuer mismatch: {discovery_url} advertises \
+                 {advertised_issuer}, expected {issuer_url}"
+            );
+        }
+
+        let authorize_url = discovery["authorization_endpoint"]
+            .as_str()
+            .context("OIDC discovery document is missing authorization_endpoint")?
+            .to_string();
+        let token_url = discovery["token_endpoint"]
+            .as_str()
+            .context("OIDC discovery document is missing token_endpoint")?
+            .to_string();
+        tracing::info!(%authorize_url, %token_url, "OIDC endpoints resolved from discovery");
+
         Ok(Some(Self {
             issuer_url,
-            authorize_url: format!("{origin}/oauth2/authorise"),
-            token_url: format!("{origin}/oauth2/token"),
+            authorize_url,
+            token_url,
             client_id,
             client_secret,
             redirect_url: format!("{}/api/auth/callback", config.external_url),
-            http: crate::kanidm::build_kanidm_http_client(config)?,
+            http,
         }))
     }
 }
@@ -647,41 +692,101 @@ mod tests {
         );
     }
 
-    #[test]
-    fn oidc_state_builds_kanidm_endpoints_from_per_client_issuer() {
-        let config = oidc_test_config("https://idm.example.com/oauth2/openid/kanidm_admin_ui/");
-        let oidc = OidcState::new(&config).unwrap().unwrap();
-        assert_eq!(
-            oidc.issuer_url,
-            "https://idm.example.com/oauth2/openid/kanidm_admin_ui"
-        );
-        assert_eq!(
-            oidc.authorize_url,
-            "https://idm.example.com/oauth2/authorise"
-        );
-        assert_eq!(oidc.token_url, "https://idm.example.com/oauth2/token");
+    /// Serves a discovery document at the per-client issuer path.
+    async fn mount_discovery(server: &wiremock::MockServer, doc: serde_json::Value) {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+        Mock::given(method("GET"))
+            .and(path(
+                "/oauth2/openid/kanidm_admin_ui/.well-known/openid-configuration",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(doc))
+            .mount(server)
+            .await;
     }
 
-    #[test]
-    fn oidc_state_rejects_wrong_issuer_shape() {
+    /// A Kanidm-shaped discovery document served from `base`.
+    fn discovery_doc(base: &str) -> serde_json::Value {
+        serde_json::json!({
+            "issuer": format!("{base}/oauth2/openid/kanidm_admin_ui"),
+            "authorization_endpoint": format!("{base}/ui/oauth2"),
+            "token_endpoint": format!("{base}/oauth2/token"),
+        })
+    }
+
+    async fn oidc_state_for(server: &wiremock::MockServer) -> anyhow::Result<Option<OidcState>> {
+        // Trailing slash on purpose: the configured issuer must be trimmed.
+        let issuer = format!("{}/oauth2/openid/kanidm_admin_ui/", server.uri());
+        OidcState::new(&oidc_test_config(&issuer)).await
+    }
+
+    #[tokio::test]
+    async fn oidc_state_resolves_endpoints_from_discovery() {
+        // Regression: pinning `{origin}/oauth2/authorise` sent session-less
+        // browsers to Kanidm's JSON API, which answers with a bare 401
+        // instead of the login page. The redirect target must be the
+        // discovery `authorization_endpoint` (/ui/oauth2 on Kanidm 1.x).
+        let server = wiremock::MockServer::start().await;
+        mount_discovery(&server, discovery_doc(&server.uri())).await;
+        let oidc = oidc_state_for(&server).await.unwrap().unwrap();
+        assert_eq!(
+            oidc.issuer_url,
+            format!("{}/oauth2/openid/kanidm_admin_ui", server.uri())
+        );
+        assert_eq!(oidc.authorize_url, format!("{}/ui/oauth2", server.uri()));
+        assert_eq!(oidc.token_url, format!("{}/oauth2/token", server.uri()));
+    }
+
+    #[tokio::test]
+    async fn oidc_state_rejects_wrong_issuer_shape() {
+        // Checked before any HTTP happens; no discovery server needed.
         for issuer in [
             "https://idm.example.com",
             "https://idm.example.com/oauth2/openid/",
             "https://idm.example.com/oauth2/openid/other_client",
         ] {
             assert!(
-                OidcState::new(&oidc_test_config(issuer)).is_err(),
+                OidcState::new(&oidc_test_config(issuer)).await.is_err(),
                 "should reject issuer {issuer}"
             );
         }
     }
 
-    #[test]
-    fn authorize_redirect_includes_client_id() {
+    #[tokio::test]
+    async fn oidc_state_rejects_discovery_issuer_mismatch() {
+        let server = wiremock::MockServer::start().await;
+        let mut doc = discovery_doc(&server.uri());
+        doc["issuer"] = "https://other.example.com/oauth2/openid/kanidm_admin_ui".into();
+        mount_discovery(&server, doc).await;
+        assert!(oidc_state_for(&server).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn oidc_state_rejects_discovery_missing_endpoints() {
+        let server = wiremock::MockServer::start().await;
+        let mut doc = discovery_doc(&server.uri());
+        doc.as_object_mut()
+            .unwrap()
+            .remove("authorization_endpoint");
+        mount_discovery(&server, doc).await;
+        assert!(oidc_state_for(&server).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn oidc_state_fails_when_discovery_unreachable() {
+        // No discovery mock mounted: startup must fail fast rather than boot
+        // with a guessed authorize URL.
+        let server = wiremock::MockServer::start().await;
+        assert!(oidc_state_for(&server).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn authorize_redirect_includes_client_id() {
         // Regression: v0.1.1 dropped client_id from the authorize redirect and
         // Kanidm rejected the login with 400 "missing field `client_id`".
-        let config = oidc_test_config("https://idm.example.com/oauth2/openid/kanidm_admin_ui/");
-        let oidc = OidcState::new(&config).unwrap().unwrap();
+        let server = wiremock::MockServer::start().await;
+        mount_discovery(&server, discovery_doc(&server.uri())).await;
+        let oidc = oidc_state_for(&server).await.unwrap().unwrap();
         let flow = OidcFlow {
             state: "flow-state".into(),
             nonce: "flow-nonce".into(),
@@ -691,7 +796,7 @@ mod tests {
 
         let redirect = authorize_redirect(&oidc, &flow);
         let (base, query) = redirect.split_once('?').unwrap();
-        assert_eq!(base, "https://idm.example.com/oauth2/authorise");
+        assert_eq!(base, format!("{}/ui/oauth2", server.uri()));
         let params: std::collections::HashMap<String, String> = query
             .split('&')
             .map(|kv| {

@@ -116,6 +116,31 @@ cargo run
 
 The app will be available at `http://localhost:8080`.
 
+### Custom port
+
+The server listens on `0.0.0.0:8080` by default. To run on a different port:
+
+```bash
+cargo run -- --port 8081
+```
+
+The `--` separator is required — it tells `cargo run` to pass the remaining flags to the
+binary. Without it (`cargo run --port 8081`), cargo rejects the flag itself.
+
+Available flags (they override the `LISTEN_ADDR` environment variable):
+
+| Flag | Description |
+|---|---|
+| `--port <PORT>` | Port to listen on (host kept from `LISTEN_ADDR`, default `0.0.0.0`) |
+| `--listen-addr <ADDR>` | Full listen address, e.g. `127.0.0.1:9000` |
+| `-h`, `--help` | Print usage |
+
+Alternatively, set `LISTEN_ADDR=0.0.0.0:8081` (in the shell or `.env`).
+
+> **Note:** If OIDC is configured, the callback URL registered in Kanidm contains the port
+> (`http://localhost:8080/api/auth/callback`). After changing the port, update the OAuth2
+> client's redirect URL in Kanidm and `EXTERNAL_URL` to match.
+
 ### Development mode
 
 For frontend development with hot reload:

@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use axum::extract::{FromRef, FromRequestParts};
 use axum::http::header::COOKIE;
 use axum::http::request::Parts;
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::response::{AppendHeaders, IntoResponse, Redirect, Response};
 use base64::Engine;
 use ring::rand::SecureRandom;
 use serde::de::DeserializeOwned;
@@ -543,11 +543,14 @@ pub async fn callback_handler(
     let cookie = create_session_cookie(&session, state.config.cookie_secret.as_bytes(), secure)
         .map_err(AppError::Internal)?;
 
+    // AppendHeaders appends every header; a plain [(K, V); N] array uses
+    // insert semantics, so two Set-Cookie entries would overwrite each other
+    // and the browser would only ever receive the last one.
     Ok((
-        [
+        AppendHeaders([
             (axum::http::header::SET_COOKIE, cookie),
             (axum::http::header::SET_COOKIE, delete_oidc_state_cookie()),
-        ],
+        ]),
         Redirect::to("/"),
     )
         .into_response())
@@ -841,5 +844,140 @@ mod tests {
             params.get("code_challenge_method").map(String::as_str),
             Some("S256")
         );
+    }
+
+    /// Signs nothing — the callback verifies claims (iss/aud/nonce) manually
+    /// instead of checking the JWT signature, so a bare payload suffices.
+    fn test_id_token(issuer: &str, nonce: &str, subject: &str) -> String {
+        use base64::Engine;
+        let enc = |value: &serde_json::Value| {
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(value.to_string())
+        };
+        format!(
+            "{}.{}.{}",
+            enc(&serde_json::json!({ "alg": "HS256" })),
+            enc(&serde_json::json!({
+                "iss": issuer,
+                "aud": "kanidm_admin_ui",
+                "nonce": nonce,
+                "preferred_username": subject,
+                "name": "Thomas",
+                "email": "thomas@example.com",
+            })),
+            "signature-not-checked"
+        )
+    }
+
+    #[tokio::test]
+    async fn callback_sets_session_and_clears_state_cookie() {
+        // Full-flow regression: a successful callback must emit BOTH the
+        // session cookie and the state-cookie deletion. Dropping the session
+        // Set-Cookie sends every "successful" login straight back to the
+        // identity provider (whoami 401 -> /api/auth/login).
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+
+        let server = wiremock::MockServer::start().await;
+        mount_discovery(&server, discovery_doc(&server.uri())).await;
+        let issuer = format!("{}/oauth2/openid/kanidm_admin_ui", server.uri());
+
+        let flow = OidcFlow {
+            state: "flow-state".into(),
+            nonce: "flow-nonce".into(),
+            code_verifier: "flow-verifier".into(),
+            exp: now_unix() + 600,
+        };
+        Mock::given(method("POST"))
+            .and(path("/oauth2/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "at",
+                "id_token": test_id_token(&issuer, &flow.nonce, "thomas"),
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v1/person/thomas"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "attrs": { "memberof": ["idm_admins@example.domain"] }
+            })))
+            .mount(&server)
+            .await;
+
+        let mut config = oidc_test_config(&format!("{issuer}/"));
+        config.kanidm_url = server.uri();
+        let app_state = crate::AppState {
+            kanidm: crate::kanidm::KanidmClient::new(&config).unwrap(),
+            config: config.clone(),
+            oidc: OidcState::new(&config).await.unwrap(),
+        };
+
+        let state_cookie = set_oidc_state_cookie(&flow, SECRET.as_bytes(), true).unwrap();
+        let cookie_value = state_cookie
+            .split(';')
+            .next()
+            .unwrap()
+            .split_once('=')
+            .unwrap()
+            .1
+            .to_string();
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::COOKIE,
+            format!("{OIDC_STATE_COOKIE}={cookie_value}")
+                .parse()
+                .unwrap(),
+        );
+
+        let params: std::collections::HashMap<String, String> = [
+            ("code".to_string(), "auth-code".to_string()),
+            ("state".to_string(), flow.state.clone()),
+        ]
+        .into();
+
+        let response = callback_handler(
+            axum::extract::State(app_state),
+            headers,
+            axum::extract::Query(params),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
+        let set_cookies: Vec<String> = response
+            .headers()
+            .get_all(axum::http::header::SET_COOKIE)
+            .iter()
+            .map(|v| v.to_str().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            set_cookies.len(),
+            2,
+            "callback must set the session cookie and clear the state cookie, got {set_cookies:?}"
+        );
+
+        let session_cookie = set_cookies
+            .iter()
+            .find(|c| c.starts_with(SESSION_COOKIE))
+            .expect("session cookie missing from callback response");
+        assert!(session_cookie.contains("Path=/"));
+        assert!(session_cookie.contains(&format!("Max-Age={}", SESSION_TTL.as_secs())));
+        assert!(
+            set_cookies.iter().any(
+                |c| c.starts_with(&format!("{OIDC_STATE_COOKIE}=;")) && c.contains("Max-Age=0")
+            ),
+            "state cookie not cleared: {set_cookies:?}"
+        );
+
+        // The session cookie must decode to a live session for the caller.
+        let token = session_cookie
+            .split(';')
+            .next()
+            .unwrap()
+            .split_once('=')
+            .unwrap()
+            .1;
+        let session: Session = decode_token(token, SECRET.as_bytes()).unwrap();
+        assert_eq!(session.user_id, "thomas");
+        assert!(session.exp > now_unix());
     }
 }

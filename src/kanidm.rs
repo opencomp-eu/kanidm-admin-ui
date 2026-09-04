@@ -44,11 +44,33 @@ fn load_ca_certificates(pem: &str) -> Result<Vec<reqwest::Certificate>> {
 
 /// Transport-level failures (DNS, connect, TLS) never reach Kanidm, so
 /// reqwest's error is the only diagnostic — and its Display hides the root
-/// cause. Log and surface the full source chain.
+/// cause. Log and surface the full source chain, plus a remediation hint for
+/// known deployment mistakes.
 fn send_error(path: &str, e: reqwest::Error) -> AppError {
     let chain = crate::error::error_chain(&e);
-    tracing::warn!(path, error = %chain, "Kanidm request failed");
-    AppError::Upstream(chain)
+    match tls_hint(&chain) {
+        Some(hint) => tracing::warn!(path, error = %chain, hint, "Kanidm request failed"),
+        None => tracing::warn!(path, error = %chain, "Kanidm request failed"),
+    }
+    AppError::Upstream(match tls_hint(&chain) {
+        Some(hint) => format!("{chain} (hint: {hint})"),
+        None => chain,
+    })
+}
+
+/// Maps rustls certificate-verification failures caused by malformed Kanidm
+/// TLS certificates to actionable hints.
+fn tls_hint(chain: &str) -> Option<&'static str> {
+    if chain.contains("CaUsedAsEndEntity") {
+        Some(
+            "the Kanidm server certificate has basicConstraints CA:TRUE and rustls \
+             rejects CA certificates used as server certificates; regenerate it as \
+             an end-entity certificate (openssl req -x509 -addext \
+             basicConstraints=critical,CA:FALSE) and update KANIDM_TLS_CA_FILE",
+        )
+    } else {
+        None
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -664,5 +686,13 @@ e66KmRDhIM57o+U=
         keys.sort_unstable();
         assert_eq!(keys, ["displayname", "name", "origin"]);
         assert_eq!(entry.attrs["origin"], ["https://app.example.com"]);
+    }
+    #[test]
+    fn tls_hint_names_ca_used_as_end_entity() {
+        let chain = "error sending request for url (https://kanidm:8443/v1/person/x): \
+                     client error (Connect): invalid peer certificate: \
+                     Other(OtherError(CaUsedAsEndEntity))";
+        assert!(tls_hint(chain).unwrap().contains("CA:FALSE"));
+        assert!(tls_hint("dns error: failed to lookup address information").is_none());
     }
 }

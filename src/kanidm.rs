@@ -15,13 +15,40 @@ pub fn build_kanidm_http_client(config: &Config) -> Result<HttpClient> {
     if let Some(path) = &config.kanidm_tls_ca_file {
         let pem = std::fs::read_to_string(path)
             .with_context(|| format!("failed to read KANIDM_TLS_CA_FILE {path}"))?;
-        let cert = reqwest::Certificate::from_pem(pem.as_bytes())
+        let certs = load_ca_certificates(&pem)
             .with_context(|| format!("invalid PEM in KANIDM_TLS_CA_FILE {path}"))?;
-        builder = builder.add_root_certificate(cert);
+        tracing::info!(
+            count = certs.len(),
+            path,
+            "trusting CA certificates for Kanidm TLS"
+        );
+        for cert in certs {
+            builder = builder.add_root_certificate(cert);
+        }
     }
     builder
         .build()
         .context("failed to build Kanidm HTTP client")
+}
+
+/// Parses every certificate in a PEM file, matching curl/openssl `--cacert`
+/// semantics. A first-block-only parser would silently drop the actual trust
+/// anchor in a leaf-first chain file.
+fn load_ca_certificates(pem: &str) -> Result<Vec<reqwest::Certificate>> {
+    let certs = reqwest::Certificate::from_pem_bundle(pem.as_bytes())?;
+    if certs.is_empty() {
+        anyhow::bail!("no certificates found in PEM");
+    }
+    Ok(certs)
+}
+
+/// Transport-level failures (DNS, connect, TLS) never reach Kanidm, so
+/// reqwest's error is the only diagnostic — and its Display hides the root
+/// cause. Log and surface the full source chain.
+fn send_error(path: &str, e: reqwest::Error) -> AppError {
+    let chain = crate::error::error_chain(&e);
+    tracing::warn!(path, error = %chain, "Kanidm request failed");
+    AppError::Upstream(chain)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,7 +192,7 @@ impl KanidmClient {
             .bearer_auth(&self.token)
             .send()
             .await
-            .map_err(|e| AppError::Upstream(e.to_string()))
+            .map_err(|e| send_error(path, e))
     }
 
     async fn post<T: Serialize>(
@@ -179,7 +206,7 @@ impl KanidmClient {
             .json(body)
             .send()
             .await
-            .map_err(|e| AppError::Upstream(e.to_string()))
+            .map_err(|e| send_error(path, e))
     }
 
     async fn patch<T: Serialize>(
@@ -193,7 +220,7 @@ impl KanidmClient {
             .json(body)
             .send()
             .await
-            .map_err(|e| AppError::Upstream(e.to_string()))
+            .map_err(|e| send_error(path, e))
     }
 
     async fn delete(&self, path: &str) -> Result<reqwest::Response, AppError> {
@@ -202,7 +229,7 @@ impl KanidmClient {
             .bearer_auth(&self.token)
             .send()
             .await
-            .map_err(|e| AppError::Upstream(e.to_string()))
+            .map_err(|e| send_error(path, e))
     }
 
     async fn delete_with_body<T: Serialize>(
@@ -216,7 +243,7 @@ impl KanidmClient {
             .json(body)
             .send()
             .await
-            .map_err(|e| AppError::Upstream(e.to_string()))
+            .map_err(|e| send_error(path, e))
     }
 
     async fn check_response(resp: reqwest::Response) -> Result<reqwest::Response, AppError> {
@@ -556,6 +583,79 @@ fn oauth2_basic_entry(name: &str, displayname: &str, origin: &str) -> Entry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Locally generated throwaway test certificates (no private keys).
+    const TEST_LEAF_CERT: &str = "-----BEGIN CERTIFICATE-----
+MIIDKjCCAhKgAwIBAgIUDwow/yF5Ataeo5WsVeXdQyKIPhcwDQYJKoZIhvcNAQEL
+BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTI2MDkwNDA4NDQyN1oXDTI2MTAw
+NDA4NDQyN1owFDESMBAGA1UEAwwJbG9jYWxob3N0MIIBIjANBgkqhkiG9w0BAQEF
+AAOCAQ8AMIIBCgKCAQEAyJ7uz+UR3ax40fXgEPD3zJa1VUpMrbqwZiVt42Uzyrq/
+Zq4WwTC8VpgWYIiXOZQkCAVZ4KCltk9x0cPFf10Sn5wSU1qip4xBxWUbECz0zLmg
+MsbJ0xbeliCXAVkThTGaAvqGUFv3bxwKOYi9ol8j1jOYnzOwZkny5pgwfedcNmau
+e9J342YsMhF9YMYWVmF44usBFHUCOe2TDS5jMoYOVqLotskTKV3wjVIUyaC6pge7
+DJ1cMBsOAns9PtR3WF8hGPgySA5lu0dH7a91kZxjxSdtOzLI4gPp4ofFBPViXWwn
+cppP27OhIexeDOMM/eS2E1f+u088qgpSa5Kpa3o7jQIDAQABo3QwcjAdBgNVHQ4E
+FgQUidYm+Egqk4U9YrSGVD1kHebm/8gwHwYDVR0jBBgwFoAUidYm+Egqk4U9YrSG
+VD1kHebm/8gwIgYDVR0RBBswGYIJbG9jYWxob3N0ggZrYW5pZG2HBH8AAAEwDAYD
+VR0TAQH/BAIwADANBgkqhkiG9w0BAQsFAAOCAQEAWiSCso4R6zu6fEP9xAL0HDMk
+filAg8VcDvomzbAtB0GNVlSFdc79aPLHgiZHtsq/SIilGlyOQVI6DybPvq0YMqpu
+RRcaZMtMqSNdx/2Bi2+Vqv5uVjKzOJ7p6+N+b/xVd9vizcjjTMjk+z7Ov8p7PqLS
+uESWOYUpsNYcfkPFxK1PdTJW7xQ8AaKQ40I3OufhWeDw5PzgyimVFVhgCRIRbF7/
+83EGY6t2Wy2Q6fFrr/+yxVrTJ47CGXUsXScAE9MnuQivmAleHPlodorcEQqOkczL
+pLzsH4a+tRFLZ99w6K/+PbpEwBzAzgIXjuvsb+SHgdgf9eY8KZQJU0RpJo04gA==
+-----END CERTIFICATE-----
+";
+    const TEST_CA_CERT: &str = "-----BEGIN CERTIFICATE-----
+MIIDBzCCAe+gAwIBAgIUaJ6FNGJrB2C1RVPIOCdHRnbp1FIwDQYJKoZIhvcNAQEL
+BQAwEzERMA8GA1UEAwwIUmVwcm8gQ0EwHhcNMjYwOTA0MDg0NDI3WhcNMjYxMDA0
+MDg0NDI3WjATMREwDwYDVQQDDAhSZXBybyBDQTCCASIwDQYJKoZIhvcNAQEBBQAD
+ggEPADCCAQoCggEBALDf5clBoamrXMN+WywlheNCibIqSRc9/ogI5ZjrZkI508PN
+MSGL+Of1TVxLFIU8HmdqhoVe6o59RXfvt0h+2wlGT8qBC9rGtsthNhswIraTkeKI
+tipJrAa0MKKQB4tCnwzUpKKYFY5DHN9ayAEgXe/qhoJs3p9aFvrfvCMlTEINuvf5
+vxkH7+1igMs0xGkC75WwuSS8vYOiJVsle0/PohHz2HN4KdRsYrjYZdwXASW1iHic
+PFHQg6w5T0Y819pitnZ+GqfOsW64OroMb2L9mHjIjgc9sC+I35ePYnHNYBw7RZIv
+jJ8ZaR27fbhkGtAqRcXjhC1/LYzNzH6FQTSUc3UCAwEAAaNTMFEwHQYDVR0OBBYE
+FOtWeJsGj62l1Q56RtjMVnlWDdGGMB8GA1UdIwQYMBaAFOtWeJsGj62l1Q56RtjM
+VnlWDdGGMA8GA1UdEwEB/wQFMAMBAf8wDQYJKoZIhvcNAQELBQADggEBAJ4deDQc
+cnEYmJQGASqAyEDpiUlhBMXXzZFyScDw+YUILa67Y2pi9wq+1ue1gQXjgR/iGRmK
+2sA9MZ4ITYMdXS2HSLzaEhtMBWC5gT4+foaAQzTTbOp7ERFjF0xHr54vvvqTdJ1M
+N5JqxXEuWjDexUE7WNDJ8mhkxa+OjkaJ/hDOgxhHFStfP72yN2rbuA3/ZIPIqAQs
+o/9vzHRbRToh0NUQOs1vXMBqjWRoRxnvuGN63azH9oG3NG7HyN9gXt7D2vdNtzoI
+Yx/GHLtxKo7gumfHts2qU/zHPyqppq4GpUkVPlLOfYZNZjHv1107HDjwW1aRvGmi
+e66KmRDhIM57o+U=
+-----END CERTIFICATE-----
+";
+
+    #[test]
+    fn ca_pem_bundle_parses_every_certificate() {
+        // Chain files hold leaf + issuer; trusting only the first block would
+        // silently drop the actual trust anchor from a leaf-first file.
+        let bundle = format!("{TEST_LEAF_CERT}{TEST_CA_CERT}");
+        assert_eq!(load_ca_certificates(&bundle).unwrap().len(), 2);
+        assert_eq!(load_ca_certificates(TEST_CA_CERT).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn ca_pem_bundle_rejects_empty_and_garbage() {
+        assert!(load_ca_certificates("").is_err());
+        assert!(load_ca_certificates("not a pem").is_err());
+    }
+
+    #[tokio::test]
+    async fn send_error_surfaces_root_cause() {
+        // Connection-level failures must name their cause instead of
+        // reqwest's opaque "error sending request".
+        let client = HttpClient::builder().build().unwrap();
+        let err = client
+            .get("http://127.0.0.1:9/status")
+            .send()
+            .await
+            .unwrap_err();
+        let chain = crate::error::error_chain(&err);
+        assert!(
+            chain.contains("connect") || chain.contains("refused") || chain.contains("tcp"),
+            "chain should name the connection failure: {chain}"
+        );
+    }
 
     #[test]
     fn oauth2_basic_entry_has_only_valid_attributes() {

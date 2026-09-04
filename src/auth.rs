@@ -453,7 +453,11 @@ pub async fn callback_handler(
         ])
         .send()
         .await
-        .map_err(|e| AppError::Upstream(e.to_string()))?;
+        .map_err(|e| {
+            let chain = crate::error::error_chain(&e);
+            tracing::warn!(error = %chain, "OIDC token exchange request failed");
+            AppError::Upstream(chain)
+        })?;
 
     if !token_resp.status().is_success() {
         let status = token_resp.status();

@@ -22,6 +22,21 @@ pub enum AppError {
     Internal(#[from] anyhow::Error),
 }
 
+/// Formats an error with its full `source()` chain, e.g.
+/// `error sending request for url (...): invalid peer certificate: UnknownIssuer`.
+/// reqwest's Display alone flattens connection-level causes (DNS, proxy, TLS)
+/// into an opaque message, which makes operator diagnosis impossible.
+pub fn error_chain(err: &dyn std::error::Error) -> String {
+    let mut msg = err.to_string();
+    let mut source = err.source();
+    while let Some(e) = source {
+        msg.push_str(": ");
+        msg.push_str(&e.to_string());
+        source = e.source();
+    }
+    msg
+}
+
 impl axum::response::IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
         let (status, message) = match &self {

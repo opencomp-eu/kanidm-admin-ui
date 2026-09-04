@@ -1,21 +1,18 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { listGroups, createGroup } from "../api";
+import { listGroups } from "../api";
 import type { KanidmEntry } from "../types";
 import { attrVal } from "../types";
-import { usePageTitle, useToast } from "../components/Layout";
-import Modal from "../components/Modal";
+import { usePageTitle } from "../components/Layout";
+import { CreateGroupModal } from "../components/GroupModals";
 
 export default function Groups() {
-  const { addToast } = useToast();
   const navigate = useNavigate();
   const [groups, setGroups] = useState<KanidmEntry[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showCreate, setShowCreate] = useState(false);
-  const [createForm, setCreateForm] = useState({ name: "", description: "" });
-  const [creating, setCreating] = useState(false);
   usePageTitle("Groups");
 
   const load = () => {
@@ -33,22 +30,6 @@ export default function Groups() {
     load();
   };
 
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setCreating(true);
-    setError("");
-    try {
-      await createGroup(createForm);
-      setShowCreate(false);
-      setCreateForm({ name: "", description: "" });
-      addToast("Group created");
-      load();
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setCreating(false);
-    }
-  };
 
   return (
     <div>
@@ -117,43 +98,7 @@ export default function Groups() {
       )}
 
       {showCreate && (
-        <Modal title="Create Group" onClose={() => setShowCreate(false)}>
-          <form onSubmit={handleCreate}>
-            <div className="form-group">
-              <label>Name</label>
-              <input
-                type="text"
-                required
-                value={createForm.name}
-                onChange={(e) =>
-                  setCreateForm((f) => ({ ...f, name: e.target.value }))
-                }
-              />
-            </div>
-            <div className="form-group">
-              <label>Description</label>
-              <input
-                type="text"
-                value={createForm.description}
-                onChange={(e) =>
-                  setCreateForm((f) => ({ ...f, description: e.target.value }))
-                }
-              />
-            </div>
-            <div className="modal-actions">
-              <button
-                type="button"
-                className="btn-ghost"
-                onClick={() => setShowCreate(false)}
-              >
-                Cancel
-              </button>
-              <button type="submit" className="btn-primary" disabled={creating}>
-                {creating ? "Creating..." : "Create"}
-              </button>
-            </div>
-          </form>
-        </Modal>
+        <CreateGroupModal onClose={() => setShowCreate(false)} onCreated={load} />
       )}
     </div>
   );

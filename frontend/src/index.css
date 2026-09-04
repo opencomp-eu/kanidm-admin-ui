@@ -449,3 +449,146 @@ tr:hover td {
 .btn-copy:hover {
   background: var(--primary-hover);
 }
+
+.stat-label {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.stat-value {
+  font-size: 32px;
+  font-weight: 700;
+}
+
+.stat-sub {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.dash-columns {
+  display: grid;
+  grid-template-columns: 3fr 2fr;
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .dash-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+.dash-card h2 {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.attention-item {
+  border-top: 1px solid var(--border);
+}
+
+.attention-item:first-of-type {
+  border-top: none;
+}
+
+.attention-item summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 0;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.attention-item summary:hover {
+  color: var(--primary);
+}
+
+.attention-item summary::-webkit-details-marker {
+  display: none;
+}
+
+.attention-count {
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 1px 10px;
+  font-size: 12px;
+}
+
+.attention-users {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 10px;
+}
+
+.attention-users li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+  font-size: 14px;
+}
+
+.attention-username {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.attention-more {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.all-clear {
+  color: var(--text-muted);
+  font-size: 14px;
+  padding: 10px 0;
+  display: flex;
+  align-items: center;
+}
+
+.all-clear-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+  margin-right: 8px;
+  flex-shrink: 0;
+}
+
+.group-bars {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.group-bars li {
+  margin-bottom: 14px;
+}
+
+.group-bars li:last-child {
+  margin-bottom: 0;
+}
+
+.group-bar-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+.bar-track {
+  height: 6px;
+  background: var(--bg-hover);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  background: var(--primary);
+  border-radius: 999px;
+}

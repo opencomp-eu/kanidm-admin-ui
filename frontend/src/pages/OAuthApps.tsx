@@ -1,177 +1,106 @@
-import { useEffect, useState } from "react";
-import { listOAuth2Apps, createOAuth2App, deleteOAuth2App } from "../api";
-import type { KanidmEntry } from "../types";
-import { attrVal } from "../types";
-import ConfirmDialog from "../components/ConfirmDialog";
-import { useToast, usePageTitle } from "../components/Layout";
-import Modal from "../components/Modal";
+import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { listOAuth2Apps } from "../api";
+import { appAccessGroups, appDisplayName, appUrl, entryName, matchesQuery } from "../types";
+import { useLoader, usePageTitle } from "../hooks";
+import Avatar from "../components/Avatar";
+import Icon from "../components/Icon";
+import PageHeader from "../components/PageHeader";
+import SearchInput from "../components/SearchInput";
+import { EmptyState, ErrorBanner, LoadingState } from "../components/States";
+import { CreateAppModal } from "../components/AppModals";
 
 export default function OAuthApps() {
-  const { addToast } = useToast();
-  const [apps, setApps] = useState<KanidmEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  usePageTitle("Apps");
+  const navigate = useNavigate();
+  const [query, setQuery] = useState("");
   const [showCreate, setShowCreate] = useState(false);
-  const [createForm, setCreateForm] = useState({
-    name: "",
-    displayname: "",
-    origin: "",
-  });
-  const [creating, setCreating] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const { data: apps, error, reload } = useLoader(listOAuth2Apps, []);
 
-  usePageTitle("OAuth Apps");
-
-  const load = () => {
-    setLoading(true);
-    listOAuth2Apps()
-      .then(setApps)
-      .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(load, []);
-
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setCreating(true);
-    setError("");
-    try {
-      await createOAuth2App(createForm);
-      setShowCreate(false);
-      setCreateForm({ name: "", displayname: "", origin: "" });
-      addToast("OAuth2 app created");
-      load();
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const handleDelete = async () => {
-    if (!deleteTarget) return;
-    try {
-      await deleteOAuth2App(deleteTarget);
-      setDeleteTarget(null);
-      addToast("OAuth2 app deleted");
-      load();
-    } catch (e) {
-      setError(String(e));
-    }
-  };
+  const visible = (apps ?? [])
+    .filter((a) => matchesQuery(query, appDisplayName(a), entryName(a), appUrl(a)))
+    .sort((a, b) => appDisplayName(a).localeCompare(appDisplayName(b)));
 
   return (
     <div>
-      <h1>OAuth2 Applications</h1>
-      {error && <div className="error">{error}</div>}
-      <div className="toolbar">
-        <div style={{ flex: 1 }} />
-        <button className="btn-primary" onClick={() => setShowCreate(true)}>
-          Create App
-        </button>
-      </div>
+      <PageHeader
+        title="Apps"
+        description="Apps people can sign in to with their company account (single sign-on). Choose which groups can use each one."
+        actions={
+          <button className="btn btn-primary" onClick={() => setShowCreate(true)}>
+            <Icon name="plus" size={16} />
+            Connect an app
+          </button>
+        }
+      />
 
-      {loading ? (
-        <div className="loading">Loading...</div>
-      ) : apps.length === 0 ? (
-        <div className="empty-state">
-          <div>No OAuth2 applications</div>
-          <p>Click Create App to register your first application.</p>
-        </div>
+      {error !== null && <ErrorBanner error={error} onRetry={reload} />}
+
+      {!apps && !error ? (
+        <LoadingState />
+      ) : (apps ?? []).length === 0 ? (
+        <EmptyState
+          icon="apps"
+          title="No apps connected yet"
+          action={
+            <button className="btn btn-primary" onClick={() => setShowCreate(true)}>
+              <Icon name="plus" size={16} />
+              Connect your first app
+            </button>
+          }
+        >
+          Connect tools like a wiki, chat or file storage so people can sign in with one company account.
+        </EmptyState>
       ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Display Name</th>
-              <th>Origin</th>
-              <th style={{ width: 100 }}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {apps.map((a) => (
-              <tr key={attrVal(a, "name")}>
-                <td>{attrVal(a, "name")}</td>
-                <td>{attrVal(a, "displayname")}</td>
-                <td style={{ color: "var(--text-muted)" }}>
-                  {attrVal(a, "origin")}
-                </td>
-                <td>
-                  <button
-                    className="btn-danger btn-sm"
-                    onClick={() => setDeleteTarget(attrVal(a, "name"))}
-                  >
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <>
+          {(apps ?? []).length > 6 && (
+            <div className="toolbar">
+              <SearchInput value={query} onChange={setQuery} placeholder="Search apps…" />
+            </div>
+          )}
+          <div className="card-grid">
+            {visible.map((a) => {
+              const name = entryName(a);
+              const access = appAccessGroups(a);
+              return (
+                <Link key={name} to={`/oauth2/${encodeURIComponent(name)}`} className="group-card">
+                  <div className="group-card-head">
+                    <Avatar name={appDisplayName(a)} size="md" />
+                    <div>
+                      <div className="group-card-name">{appDisplayName(a)}</div>
+                      <div className="muted small truncate">{appUrl(a) || name}</div>
+                    </div>
+                  </div>
+                  <div className="group-card-foot">
+                    {access.length === 0 ? (
+                      <span className="badge badge-warning">
+                        <Icon name="alert" size={13} />
+                        Nobody can sign in yet
+                      </span>
+                    ) : (
+                      <span className="muted small">
+                        <Icon name="groups" size={14} /> {access.join(", ")}
+                      </span>
+                    )}
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+          {visible.length === 0 && (
+            <EmptyState icon="search" title="No matching apps">
+              Nothing matches “{query}”.
+            </EmptyState>
+          )}
+        </>
       )}
 
       {showCreate && (
-        <Modal title="Create OAuth2 App" onClose={() => setShowCreate(false)}>
-            <form onSubmit={handleCreate}>
-              <div className="form-group">
-                <label>Client ID</label>
-                <input
-                  type="text"
-                  required
-                  value={createForm.name}
-                  onChange={(e) =>
-                    setCreateForm((f) => ({ ...f, name: e.target.value }))
-                  }
-                />
-              </div>
-              <div className="form-group">
-                <label>Display Name</label>
-                <input
-                  type="text"
-                  required
-                  value={createForm.displayname}
-                  onChange={(e) =>
-                    setCreateForm((f) => ({ ...f, displayname: e.target.value }))
-                  }
-                />
-              </div>
-              <div className="form-group">
-                <label>Origin URL</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="https://app.example.com"
-                  value={createForm.origin}
-                  onChange={(e) =>
-                    setCreateForm((f) => ({ ...f, origin: e.target.value }))
-                  }
-                />
-              </div>
-              <div className="modal-actions">
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  onClick={() => setShowCreate(false)}
-                >
-                  Cancel
-                </button>
-                <button type="submit" className="btn-primary" disabled={creating}>
-                  {creating ? "Creating..." : "Create"}
-                </button>
-              </div>
-            </form>
-        </Modal>
+        <CreateAppModal
+          onClose={() => setShowCreate(false)}
+          onCreated={(name) => navigate(`/oauth2/${encodeURIComponent(name)}`)}
+        />
       )}
-
-      <ConfirmDialog
-        open={deleteTarget !== null}
-        title="Delete OAuth2 App"
-        message={`Are you sure you want to delete "${deleteTarget}"?`}
-        confirmLabel="Delete"
-        onConfirm={handleDelete}
-        onCancel={() => setDeleteTarget(null)}
-      />
     </div>
   );
 }

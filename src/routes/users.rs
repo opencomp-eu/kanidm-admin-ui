@@ -14,6 +14,18 @@ struct SetPasswordRequest {}
 #[derive(serde::Serialize)]
 struct ResetTokenResponse {
     reset_url: String,
+    expires_at: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct UpdateUserRequest {
+    displayname: String,
+    mail: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+struct SignInStatusResponse {
+    methods: Vec<String>,
 }
 
 use crate::auth::AuthSession;
@@ -28,7 +40,8 @@ pub struct SearchQuery {
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_users).post(create_user))
-        .route("/{id}", get(get_user).delete(delete_user))
+        .route("/{id}", get(get_user).patch(update_user).delete(delete_user))
+        .route("/{id}/sign-in-status", get(sign_in_status))
         .route("/{id}/disable", post(disable_user))
         .route("/{id}/enable", post(enable_user))
         .route("/{id}/groups", get(get_user_groups))
@@ -75,11 +88,42 @@ async fn create_user(
     axum::extract::State(state): axum::extract::State<AppState>,
     Json(input): Json<CreateUserRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    let name = input.name.trim();
+    super::validate_identifier(name)?;
+    let displayname = super::clean_text(Some(&input.displayname), "display name", 256)?
+        .ok_or_else(|| AppError::BadRequest("display name is required".into()))?;
+    let mail = super::clean_email(input.mail.as_deref())?;
     let entry = state
         .kanidm
-        .create_person(&input.name, &input.displayname, input.mail.as_deref())
+        .create_person(name, &displayname, mail.as_deref())
         .await?;
     Ok(Json(entry_to_json(entry)))
+}
+
+async fn update_user(
+    _session: AuthSession,
+    axum::extract::State(state): axum::extract::State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<UpdateUserRequest>,
+) -> Result<(), AppError> {
+    super::validate_identifier(&id)?;
+    let displayname = super::clean_text(Some(&input.displayname), "display name", 256)?
+        .ok_or_else(|| AppError::BadRequest("display name is required".into()))?;
+    let mail = super::clean_email(input.mail.as_deref())?;
+    state
+        .kanidm
+        .update_person_details(&id, &displayname, mail.as_deref())
+        .await
+}
+
+async fn sign_in_status(
+    _session: AuthSession,
+    axum::extract::State(state): axum::extract::State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<SignInStatusResponse>, AppError> {
+    super::validate_identifier(&id)?;
+    let methods = state.kanidm.person_sign_in_methods(&id).await?;
+    Ok(Json(SignInStatusResponse { methods }))
 }
 
 async fn delete_user(
@@ -177,8 +221,11 @@ async fn set_password(
     Json(_input): Json<SetPasswordRequest>,
 ) -> Result<Json<ResetTokenResponse>, AppError> {
     super::validate_identifier(&id)?;
-    let reset_url = state.kanidm.generate_reset_token(&id).await?;
-    Ok(Json(ResetTokenResponse { reset_url }))
+    let link = state.kanidm.generate_reset_token(&id).await?;
+    Ok(Json(ResetTokenResponse {
+        reset_url: link.url,
+        expires_at: link.expires_at,
+    }))
 }
 
 fn entry_to_json(entry: crate::kanidm::Entry) -> serde_json::Value {

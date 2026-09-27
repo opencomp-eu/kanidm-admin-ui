@@ -131,6 +131,28 @@ mod tests {
     }
 
     #[test]
+    fn clean_text_trims_blanks_and_bounds_length() {
+        use kanidm_admin_ui::routes::clean_text;
+        assert_eq!(clean_text(Some("  Jane  "), "name", 10).unwrap().as_deref(), Some("Jane"));
+        assert_eq!(clean_text(Some("   "), "name", 10).unwrap(), None);
+        assert_eq!(clean_text(None, "name", 10).unwrap(), None);
+        assert!(clean_text(Some("x".repeat(11).as_str()), "name", 10).is_err());
+    }
+
+    #[test]
+    fn clean_email_accepts_blank_and_rejects_malformed() {
+        use kanidm_admin_ui::routes::clean_email;
+        assert_eq!(
+            clean_email(Some(" jane@example.com ")).unwrap().as_deref(),
+            Some("jane@example.com")
+        );
+        assert_eq!(clean_email(Some("")).unwrap(), None);
+        for bad in ["jane", "jane@", "@example.com", "jane@localhost", "ja ne@example.com"] {
+            assert!(clean_email(Some(bad)).is_err(), "should reject {bad:?}");
+        }
+    }
+
+    #[test]
     fn validate_identifier_rejects_path_injection() {
         for bad in [
             "",

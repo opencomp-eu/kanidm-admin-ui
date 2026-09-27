@@ -23,18 +23,25 @@ kanidm-admin-ui/
 │   ├── src/
 │   │   ├── main.tsx       # React entry point
 │   │   ├── App.tsx        # Router setup
-│   │   ├── api.ts         # API client functions (fetch wrapper)
-│   │   ├── types.ts       # KanidmEntry, helpers (attrVal, attrVals, userStatus, userDisplayName)
+│   │   ├── api.ts         # API client functions (fetch wrapper), friendlyError, runForEach
+│   │   ├── types.ts       # KanidmEntry + attribute helpers (accountStatus, isSystemEntry, ...)
+│   │   ├── hooks.ts       # useLoader, useAction, usePageTitle
+│   │   ├── insights.ts    # Home-page "suggested actions" rules
 │   │   ├── pages/
-│   │   │   ├── Dashboard.tsx
-│   │   │   ├── Users.tsx        # User list + create modal
-│   │   │   ├── UserDetail.tsx   # User detail, groups, copy groups, reset token
-│   │   │   ├── Groups.tsx       # Group list + create modal
-│   │   │   ├── GroupDetail.tsx  # Group detail, members
-│   │   │   └── OAuthApps.tsx    # OAuth2 apps
+│   │   │   ├── Dashboard.tsx      # Home: search, quick actions, stats, suggestions
+│   │   │   ├── Users.tsx          # People list with filters
+│   │   │   ├── UserDetail.tsx     # Person profile: groups, apps, sign-in, suspend/delete
+│   │   │   ├── Groups.tsx         # Group cards (built-in groups hidden by default)
+│   │   │   ├── GroupDetail.tsx    # Group members, app access, edit/delete
+│   │   │   ├── OAuthApps.tsx      # Connected apps
+│   │   │   ├── OAuthAppDetail.tsx # Which groups can sign in to an app
+│   │   │   └── SignedOut.tsx
 │   │   └── components/
-│   │       ├── Layout.tsx       # App shell with nav
-│   │       └── ConfirmDialog.tsx
+│   │       ├── Layout.tsx         # App shell with nav
+│   │       ├── UserModals.tsx     # Add-person flow, edit, setup link
+│   │       ├── GroupModals.tsx / AppModals.tsx
+│   │       ├── PickerList.tsx / PickerModal.tsx  # Searchable people/group selection
+│   │       └── ...                # Card, PageHeader, States, Avatar, StatusBadge, Icon, Toast
 │   └── vite.config.ts     # outDir: "../static"
 ├── tests/
 │   └── api_tests.rs       # Unit tests
@@ -76,7 +83,8 @@ struct KanidmClient { http, base_url, token }  // HTTP client for Kanidm API
 interface KanidmEntry { attrs: Record<string, string[]> }
 function attrVal(entry, key): string      // Get first value
 function attrVals(entry, key): string[]   // Get all values
-function userStatus(entry): string        // "active" | "disabled" | "unknown"
+function accountStatus(entry): AccountStatus  // active | suspended | not_started (from account_expire / account_valid_from)
+function isSystemEntry(entry): boolean    // Kanidm built-in group/account (reserved UUID range or idm_/system_ name)
 ```
 
 ## Kanidm API Attributes
@@ -89,7 +97,12 @@ function userStatus(entry): string        // "active" | "disabled" | "unknown"
 | `memberof` | Group memberships (SPN format: `name@domain`) | Users |
 | `directmemberof` | Direct group memberships | Users |
 | `uuid` | Unique identifier | All entries |
-| `primary_credential` | Has password set | Users |
+| `account_expire` | Account locked once this time passes | Users |
+| `account_valid_from` | Account unusable before this time | Users |
+| `passkeys` | Registered passkeys | Users (sign-in status) |
+| `member` | Group members (SPN format) | Groups |
+| `description` | Group description | Groups |
+| `oauth2_rs_scope_map` | Groups allowed to use an app (`group@domain: {scopes}`) | OAuth2 |
 | `spn` | Service principal name | Users |
 
 ## Environment Variables
@@ -113,19 +126,21 @@ function userStatus(entry): string        // "active" | "disabled" | "unknown"
 |--------|------|-------------|
 | GET | `/api/auth/whoami` | Current user info |
 | GET/POST | `/api/users` | List/Create users |
-| GET/DELETE | `/api/users/{id}` | Get/Delete user |
-| POST | `/api/users/{id}/disable` | Disable user |
-| POST | `/api/users/{id}/enable` | Enable user |
+| GET/PATCH/DELETE | `/api/users/{id}` | Get/Update (display name, email)/Delete user |
+| GET | `/api/users/{id}/sign-in-status` | Sign-in methods the person has set up |
+| POST | `/api/users/{id}/disable` | Suspend user (sets `account_expire` to now) |
+| POST | `/api/users/{id}/enable` | Restore user (clears `account_expire`) |
 | GET | `/api/users/{id}/groups` | User's groups |
 | POST/DELETE | `/api/users/{id}/groups/{group}` | Add/Remove from group |
 | POST | `/api/users/{id}/copy-groups-from` | Copy groups from another user |
-| POST | `/api/users/{id}/set-password` | Generate reset token |
+| POST | `/api/users/{id}/set-password` | Generate reset link (`reset_url`, `expires_at`) |
 | GET/POST | `/api/groups` | List/Create groups |
-| GET/DELETE | `/api/groups/{id}` | Get/Delete group |
+| GET/PATCH/DELETE | `/api/groups/{id}` | Get/Update description/Delete group |
 | GET | `/api/groups/{id}/members` | Group members |
 | POST/DELETE | `/api/groups/{id}/members/{member}` | Add/Remove member |
 | GET/POST | `/api/oauth2` | List/Create OAuth2 apps |
 | GET/DELETE | `/api/oauth2/{id}` | Get/Delete OAuth2 app |
+| POST/DELETE | `/api/oauth2/{id}/access/{group}` | Grant/revoke a group's scope map (`openid profile email`) |
 
 ## Adding New Features
 
@@ -145,7 +160,13 @@ function userStatus(entry): string        // "active" | "disabled" | "unknown"
 - **Create endpoints** return empty/different format — don't deserialize response, return the entry we sent
 - **Group memberships** use `memberof` attribute (SPN format: `name@domain`) — strip `@domain` for API calls
 - **Passwords** can't be set directly — use `_credential/_update_intent` to generate reset token
-- **Status** attribute only present when disabled — active accounts have no `status` field
+- **There is no status attribute** — Kanidm locks an account once `account_expire` has passed
+  (`kanidm person validity expire-at <id> now`); re-enabling purges it. Set/clear attributes via
+  `PUT`/`DELETE /v1/person/{id}/_attr/{attr}`.
+- **`memberof` includes built-in groups** such as `idm_all_persons`, so "has no groups" checks must
+  ignore system groups. Only `directmemberof` entries can be removed.
+- **`GET /v1/oauth2/{name}` returns 200 with `null`** for an unknown app — map it to 404.
+- **OAuth2 apps reject every login** until at least one group has a scope map.
 - **OIDC endpoints are read from discovery, never pinned** — `OidcState::new` fetches
   `{issuer}/.well-known/openid-configuration` at startup and uses its `authorization_endpoint`
   (Kanidm: `/ui/oauth2`, the browser SPA) and `token_endpoint`. `/oauth2/authorise` is the JSON

@@ -1,3 +1,5 @@
+import { useState } from "react";
+import type { ReactNode } from "react";
 import Modal from "./Modal";
 
 export default function ConfirmDialog({
@@ -5,26 +7,43 @@ export default function ConfirmDialog({
   title,
   message,
   confirmLabel = "Confirm",
+  tone = "danger",
   onConfirm,
   onCancel,
 }: {
   open: boolean;
   title: string;
-  message: string;
+  message: ReactNode;
   confirmLabel?: string;
-  onConfirm: () => void;
+  tone?: "danger" | "primary";
+  onConfirm: () => Promise<unknown> | void;
   onCancel: () => void;
 }) {
+  const [busy, setBusy] = useState(false);
   if (!open) return null;
+
+  const handleConfirm = async () => {
+    setBusy(true);
+    try {
+      await onConfirm();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Modal title={title} onClose={onCancel}>
-      <p className="modal-message">{message}</p>
+      <div className="modal-message">{message}</div>
       <div className="modal-actions">
-        <button className="btn-ghost" onClick={onCancel}>
+        <button className="btn btn-secondary" onClick={onCancel} disabled={busy}>
           Cancel
         </button>
-        <button className="btn-danger" onClick={onConfirm}>
-          {confirmLabel}
+        <button
+          className={`btn btn-${tone}`}
+          onClick={handleConfirm}
+          disabled={busy}
+        >
+          {busy ? "Working…" : confirmLabel}
         </button>
       </div>
     </Modal>

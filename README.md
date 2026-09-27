@@ -4,9 +4,15 @@ A lightweight web admin console for managing a [Kanidm](https://kanidm.com/) ide
 
 ## Features
 
-- **Users**: List, search, create, disable, delete users
-- **Groups**: List, search, create, delete groups; manage membership
-- **OAuth2 Applications**: List, create, delete OAuth2 clients
+Designed so non-technical admins (for example HR) can manage accounts without knowing Kanidm.
+
+- **Home**: search, quick actions (add a person, send a sign-in link, offboard, create a group),
+  key numbers and suggested housekeeping (people without groups or email, apps nobody can use, ...)
+- **People**: guided "add a person" flow (details → groups or "same access as a colleague" →
+  ready-to-send setup message), edit details, sign-in status, suspend/restore, delete
+- **Groups**: create with members, edit descriptions, manage members; Kanidm's built-in groups are
+  hidden by default
+- **Apps (OAuth2)**: connect apps and choose which groups can sign in to each
 - **Authentication**: OIDC login via Kanidm (or dev-mode bypass)
 - **Single container**: React frontend compiled into the Rust backend
 
@@ -222,22 +228,29 @@ All routes are prefixed with `/api`:
 | GET | `/api/users` | List users (optional `?q=search`) |
 | POST | `/api/users` | Create user |
 | GET | `/api/users/:id` | Get user details |
+| PATCH | `/api/users/:id` | Update display name and email |
 | DELETE | `/api/users/:id` | Delete user |
-| POST | `/api/users/:id/disable` | Disable user |
-| POST | `/api/users/:id/enable` | Enable user |
+| GET | `/api/users/:id/sign-in-status` | Sign-in methods the user has set up |
+| POST | `/api/users/:id/disable` | Suspend user (sets `account_expire`) |
+| POST | `/api/users/:id/enable` | Restore user (clears `account_expire`) |
+| POST | `/api/users/:id/set-password` | Generate a one-time credential reset link |
 | GET | `/api/users/:id/groups` | Get user's groups |
 | POST | `/api/users/:id/groups/:group` | Add user to group |
 | DELETE | `/api/users/:id/groups/:group` | Remove user from group |
 | GET | `/api/groups` | List groups |
 | POST | `/api/groups` | Create group |
 | GET | `/api/groups/:id` | Get group details |
+| PATCH | `/api/groups/:id` | Update group description |
 | DELETE | `/api/groups/:id` | Delete group |
 | GET | `/api/groups/:id/members` | Get group members |
 | POST | `/api/groups/:id/members/:member` | Add member to group |
 | DELETE | `/api/groups/:id/members/:member` | Remove member from group |
 | GET | `/api/oauth2` | List OAuth2 apps |
 | POST | `/api/oauth2` | Create OAuth2 app |
+| GET | `/api/oauth2/:name` | Get OAuth2 app |
 | DELETE | `/api/oauth2/:name` | Delete OAuth2 app |
+| POST | `/api/oauth2/:name/access/:group` | Let a group sign in (scopes `openid profile email`) |
+| DELETE | `/api/oauth2/:name/access/:group` | Remove a group's access |
 
 ## License
 

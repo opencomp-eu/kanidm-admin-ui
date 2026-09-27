@@ -15,7 +15,7 @@ pub struct SearchQuery {
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_groups).post(create_group))
-        .route("/{id}", get(get_group).delete(delete_group))
+        .route("/{id}", get(get_group).patch(update_group).delete(delete_group))
         .route("/{id}/members", get(get_group_members))
         .route(
             "/{id}/members/{member}",
@@ -57,11 +57,33 @@ async fn create_group(
     axum::extract::State(state): axum::extract::State<AppState>,
     Json(input): Json<CreateGroupRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    let name = input.name.trim();
+    super::validate_identifier(name)?;
+    let description = super::clean_text(input.description.as_deref(), "description", 1024)?;
     let entry = state
         .kanidm
-        .create_group(&input.name, input.description.as_deref())
+        .create_group(name, description.as_deref())
         .await?;
     Ok(Json(entry_to_json(entry)))
+}
+
+#[derive(Deserialize)]
+pub struct UpdateGroupRequest {
+    description: Option<String>,
+}
+
+async fn update_group(
+    _session: AuthSession,
+    axum::extract::State(state): axum::extract::State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<UpdateGroupRequest>,
+) -> Result<(), AppError> {
+    super::validate_identifier(&id)?;
+    let description = super::clean_text(input.description.as_deref(), "description", 1024)?;
+    state
+        .kanidm
+        .update_group_description(&id, description.as_deref())
+        .await
 }
 
 async fn delete_group(

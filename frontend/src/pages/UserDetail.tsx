@@ -1,333 +1,483 @@
-import { useEffect, useState } from "react";
-import { useParams, Link, useNavigate } from "react-router-dom";
+import { useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
-  getUser,
+  addUserToGroup,
   deleteUser,
   disableUser,
   enableUser,
-  getUserGroups,
-  addUserToGroup,
-  removeUserFromGroup,
+  getSignInMethods,
+  getUser,
   listGroups,
+  listOAuth2Apps,
   listUsers,
-  copyGroupsFrom,
-  generateResetToken,
+  removeUserFromGroup,
+  runForEach,
 } from "../api";
 import type { KanidmEntry } from "../types";
-import { attrVal, attrVals, userDisplayName, userStatus } from "../types";
+import {
+  accountStatus,
+  appAccessGroups,
+  appDisplayName,
+  attrVal,
+  attrVals,
+  directGroupNames,
+  entryName,
+  formatDate,
+  isSystemEntry,
+  isSystemGroupName,
+  spnName,
+  systemGroupNameSet,
+  teamGroupNames,
+  userDisplayName,
+} from "../types";
+import { useAction, useLoader, usePageTitle } from "../hooks";
+import Avatar from "../components/Avatar";
+import Card from "../components/Card";
 import ConfirmDialog from "../components/ConfirmDialog";
-import { useToast, usePageTitle } from "../components/Layout";
-import Modal from "../components/Modal";
-import { ResetLinkModal } from "../components/UserModals";
+import Icon from "../components/Icon";
+import PageHeader from "../components/PageHeader";
+import PickerModal from "../components/PickerModal";
+import { groupOptions, personOptions } from "../components/PickerList";
+import StatusBadge from "../components/StatusBadge";
+import { Banner, ErrorBanner, LoadingState } from "../components/States";
+import { useToast } from "../components/Toast";
+import { EditPersonModal, GroupPreview, SetupLinkModal } from "../components/UserModals";
+
+type Dialog =
+  | { kind: "edit" }
+  | { kind: "link" }
+  | { kind: "add-groups" }
+  | { kind: "pick-colleague" }
+  | { kind: "confirm-copy"; colleague: KanidmEntry; groups: string[] }
+  | { kind: "remove-group"; group: string }
+  | { kind: "suspend" }
+  | { kind: "delete" };
+
+function SignInCard({ username, onSendLink }: { username: string; onSendLink: () => void }) {
+  const { data: methods, error } = useLoader(() => getSignInMethods(username), [username]);
+  return (
+    <Card title="Sign-in" description="How this person proves who they are.">
+      {error ? (
+        <p className="muted small">We couldn't check their sign-in methods right now.</p>
+      ) : !methods ? (
+        <LoadingState label="Checking…" />
+      ) : methods.length === 0 ? (
+        <div className="callout callout-warning">
+          <Icon name="alert" size={18} />
+          <div>
+            <strong>Not set up yet</strong>
+            <p>They haven't chosen a password or passkey, so they can't sign in.</p>
+            <button className="btn btn-secondary btn-sm" onClick={onSendLink}>
+              <Icon name="key" size={15} />
+              Send setup link
+            </button>
+          </div>
+        </div>
+      ) : (
+        <ul className="check-list">
+          {methods.map((m, i) => (
+            <li key={`${m}-${i}`}>
+              <Icon name="check" size={16} />
+              {m}
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
 
 export default function UserDetail() {
-  const { id } = useParams<{ id: string }>();
+  const { id = "" } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { run } = useAction();
   const { addToast } = useToast();
-  const [user, setUser] = useState<KanidmEntry | null>(null);
-  const [allGroups, setAllGroups] = useState<KanidmEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [showDelete, setShowDelete] = useState(false);
-  const [showAddGroup, setShowAddGroup] = useState(false);
-  const [showCopyGroups, setShowCopyGroups] = useState(false);
-  const [allUsers, setAllUsers] = useState<KanidmEntry[]>([]);
-  const [copySearch, setCopySearch] = useState("");
-  const [copying, setCopying] = useState(false);
-  const [showSetPassword, setShowSetPassword] = useState(false);
-  const [resetUrl, setResetUrl] = useState("");
-
-  usePageTitle(user ? userDisplayName(user) : "User");
-
-  const load = () => {
-    if (!id) return;
-    setLoading(true);
-    Promise.all([getUser(id), getUserGroups(id), listGroups()])
-      .then(([u, _g, all]) => {
-        setUser(u);
-        setAllGroups(all);
-      })
-      .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(load, [id]);
-
-  const handleDelete = async () => {
-    if (!id) return;
-    try {
-      await deleteUser(id);
-      navigate("/users");
-      addToast("User deleted");
-    } catch (e) {
-      setError(String(e));
-    }
-  };
-
-  const handleDisable = async () => {
-    if (!id) return;
-    try {
-      const status = userStatus(user!);
-      if (status === "active") {
-        await disableUser(id);
-        addToast("User disabled");
-      } else {
-        await enableUser(id);
-        addToast("User enabled");
-      }
-      load();
-    } catch (e) {
-      setError(String(e));
-    }
-  };
-
-  const handleAddGroup = async (groupName: string) => {
-    if (!id) return;
-    try {
-      await addUserToGroup(id, groupName);
-      setShowAddGroup(false);
-      addToast(`Added to ${groupName}`);
-      load();
-    } catch (e) {
-      setError(String(e));
-    }
-  };
-
-  const handleRemoveGroup = async (groupName: string) => {
-    if (!id) return;
-    try {
-      await removeUserFromGroup(id, groupName);
-      addToast(`Removed from ${groupName}`);
-      load();
-    } catch (e) {
-      setError(String(e));
-    }
-  };
-
-  const handleCopySearch = (query: string) => {
-    setCopySearch(query);
-  };
-
-  const filteredUsers = allUsers.filter((u) => {
-    const name = attrVal(u, "name");
-    const displayName = userDisplayName(u);
-    const q = copySearch.toLowerCase();
-    return name !== id && (name.toLowerCase().includes(q) || displayName.toLowerCase().includes(q));
-  });
-
-  const handleCopyGroups = async (sourceUser: string) => {
-    if (!id) return;
-    setCopying(true);
-    try {
-      await copyGroupsFrom(id, sourceUser);
-      setShowCopyGroups(false);
-      setCopySearch("");
-      addToast(`Groups copied from ${sourceUser}`);
-      load();
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setCopying(false);
-    }
-  };
-
-  const handleOpenCopyGroups = async () => {
-    setShowCopyGroups(true);
-    setCopySearch("");
-    try {
-      const users = await listUsers();
-      setAllUsers(users);
-    } catch {
-      setAllUsers([]);
-    }
-  };
-
-  const handleGenerateReset = async () => {
-    if (!id) return;
-    setShowSetPassword(true);
-    setResetUrl("");
-    try {
-      const result = await generateResetToken(id);
-      setResetUrl(result.reset_url);
-    } catch (e) {
-      setShowSetPassword(false);
-      setError(String(e));
-    }
-  };
-
-  if (loading) return <div className="loading">Loading...</div>;
-  if (!user) return <div className="error">User not found</div>;
-
-  const status = userStatus(user);
-  const memberOf = attrVals(user, "memberof");
-  const availableGroups = allGroups.filter(
-    (g) => !memberOf.includes(attrVal(g, "name")),
+  const [dialog, setDialog] = useState<Dialog | null>(null);
+  const [colleagues, setColleagues] = useState<KanidmEntry[] | null>(null);
+  const { data, error, reload } = useLoader(
+    () =>
+      Promise.all([
+        getUser(id),
+        listGroups(),
+        // App access is extra context; the page still works without it.
+        listOAuth2Apps().catch(() => [] as KanidmEntry[]),
+      ]),
+    [id],
   );
+  const close = () => setDialog(null);
+  usePageTitle(data ? userDisplayName(data[0]) : "Person");
+
+  if (error) {
+    return (
+      <div>
+        <PageHeader title="Person" back={{ to: "/users", label: "All people" }} />
+        <ErrorBanner error={error} onRetry={reload} />
+      </div>
+    );
+  }
+  if (!data) return <LoadingState />;
+
+  const [user, groups, apps] = data;
+  const name = entryName(user);
+  const displayName = userDisplayName(user);
+  const firstName = displayName.split(" ")[0];
+  const status = accountStatus(user);
+  const suspended = status.kind === "suspended";
+  const systemNames = systemGroupNameSet(groups);
+  const memberGroups = teamGroupNames(user, systemNames);
+  const builtinGroups = directGroupNames(user).filter(
+    (g) => systemNames.has(g) || isSystemGroupName(g),
+  );
+  const allMemberships = new Set(attrVals(user, "memberof").map(spnName));
+  const usableApps = apps.filter((a) => appAccessGroups(a).some((g) => allMemberships.has(g)));
+  const availableGroups = groups.filter(
+    (g) => !isSystemEntry(g) && !memberGroups.includes(entryName(g)),
+  );
+
+  const openCopyFromColleague = async () => {
+    setDialog({ kind: "pick-colleague" });
+    if (!colleagues) setColleagues(await listUsers().catch(() => []));
+  };
+
+  const handleAddGroups = async (selected: string[]) => {
+    const { succeeded, failed } = await runForEach(selected, (g) => addUserToGroup(name, g));
+    reload();
+    if (succeeded.length > 0) {
+      addToast(`Added ${firstName} to ${succeeded.join(", ")}`);
+    }
+    if (failed.length > 0) {
+      addToast(`Couldn't add ${firstName} to ${failed.join(", ")}. Please try again.`, "error");
+    }
+  };
 
   return (
     <div>
-      <div style={{ marginBottom: 16 }}>
-        <Link to="/users" style={{ fontSize: 14 }}>
-          &larr; Back to users
-        </Link>
-      </div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start" }}>
-        <h1>{userDisplayName(user)}</h1>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button className="btn-ghost" onClick={handleDisable}>
-            {status === "active" ? "Disable" : "Enable"}
-          </button>
-          <button className="btn-danger" onClick={() => setShowDelete(true)}>
-            Delete
-          </button>
-        </div>
-      </div>
-
-      {error && <div className="error">{error}</div>}
-
-      <div className="card">
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <h2 style={{ marginBottom: 0 }}>Account Details</h2>
-          <button className="btn-ghost btn-sm" onClick={handleGenerateReset}>
-            Generate Reset Link
-          </button>
-        </div>
-        <dl className="detail-grid">
-          <dt>Username</dt>
-          <dd>{attrVal(user, "name")}</dd>
-          <dt>Display Name</dt>
-          <dd>{attrVal(user, "displayname")}</dd>
-          <dt>Email</dt>
-          <dd>{attrVal(user, "mail") || "—"}</dd>
-          <dt>UUID</dt>
-          <dd>{attrVal(user, "uuid")}</dd>
-          <dt>Status</dt>
-          <dd>
-            <span className={`badge ${status === "active" ? "badge-active" : "badge-disabled"}`}>
-              {status}
-            </span>
-          </dd>
-        </dl>
-      </div>
-
-      <div className="card">
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <h2 style={{ marginBottom: 0 }}>Group Memberships</h2>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button className="btn-primary btn-sm" onClick={() => setShowAddGroup(true)}>
-              Add to Group
+      <PageHeader
+        back={{ to: "/users", label: "All people" }}
+        leading={<Avatar name={displayName} seed={name} size="xl" muted={suspended} />}
+        title={
+          <span className="title-with-badge">
+            {displayName}
+            <StatusBadge user={user} />
+          </span>
+        }
+        description={[name, attrVal(user, "mail")].filter(Boolean).join(" · ")}
+        actions={
+          <>
+            <button className="btn btn-secondary" onClick={() => setDialog({ kind: "edit" })}>
+              <Icon name="edit" size={16} />
+              Edit details
             </button>
-            <button className="btn-ghost btn-sm" onClick={handleOpenCopyGroups}>
-              Copy Groups From...
+            <button className="btn btn-primary" onClick={() => setDialog({ kind: "link" })}>
+              <Icon name="key" size={16} />
+              Send sign-in link
             </button>
-          </div>
-        </div>
-        {memberOf.length === 0 ? (
-          <div style={{ color: "var(--text-muted)", fontSize: 14 }}>No group memberships</div>
-        ) : (
-          <div className="tag-list">
-            {memberOf.map((g) => (
-              <span key={g} className="tag">
-                <Link to={`/groups/${encodeURIComponent(g)}`}>{g}</Link>
-                <button onClick={() => handleRemoveGroup(g)} title="Remove from group">
-                  &times;
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <ConfirmDialog
-        open={showDelete}
-        title="Delete User"
-        message={`Are you sure you want to delete "${attrVal(user, "name")}"? This sends them to the recycle bin.`}
-        confirmLabel="Delete"
-        onConfirm={handleDelete}
-        onCancel={() => setShowDelete(false)}
+          </>
+        }
       />
 
-      {showAddGroup && (
-        <Modal title="Add to Group" onClose={() => setShowAddGroup(false)}>
-          {availableGroups.length === 0 ? (
-            <p className="modal-message">No more groups to add</p>
-          ) : (
-            <div className="tag-list" style={{ marginTop: 12 }}>
-              {availableGroups.map((g) => (
-                <button
-                  key={attrVal(g, "name")}
-                  className="tag"
-                  style={{ cursor: "pointer", border: "none" }}
-                  onClick={() => handleAddGroup(attrVal(g, "name"))}
-                >
-                  {attrVal(g, "name")}
-                </button>
-              ))}
-            </div>
-          )}
-          <div className="modal-actions">
-            <button className="btn-ghost" onClick={() => setShowAddGroup(false)}>
-              Close
-            </button>
+      {suspended && (
+        <div className="banner banner-danger banner-action">
+          <Icon name="lock" size={18} />
+          <div className="banner-body">
+            <strong>Access suspended{status.since ? ` since ${formatDate(status.since)}` : ""}.</strong>{" "}
+            {firstName} can't sign in to anything right now.
           </div>
-        </Modal>
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={() =>
+              run(() => enableUser(name), `${firstName}'s access has been restored`).then(reload)
+            }
+          >
+            <Icon name="unlock" size={15} />
+            Restore access
+          </button>
+        </div>
       )}
-      {showCopyGroups && (
-        <Modal
-          title="Copy Groups From User"
-          onClose={() => { setShowCopyGroups(false); setCopySearch(""); }}
-        >
-            <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 12 }}>
-              Search for a user to copy their group memberships to {attrVal(user, "name")}.
-            </p>
-            <input
-              type="search"
-              placeholder="Search users..."
-              value={copySearch}
-              onChange={(e) => handleCopySearch(e.target.value)}
-              autoFocus
-            />
-            {filteredUsers.length > 0 && (
-              <div style={{ marginTop: 12, maxHeight: 200, overflowY: "auto" }}>
-                {filteredUsers.map((u) => (
-                  <button
-                    key={attrVal(u, "name")}
-                    className="tag"
-                    style={{ cursor: "pointer", border: "none", display: "block", width: "100%", textAlign: "left", padding: "8px 12px" }}
-                    onClick={() => handleCopyGroups(attrVal(u, "name"))}
-                    disabled={copying}
-                  >
-                    {userDisplayName(u)} ({attrVal(u, "name")})
-                  </button>
-                ))}
+      {status.kind === "not_started" && (
+        <Banner tone="warning" icon="clock">
+          This account becomes usable on {formatDate(status.startsAt)}.
+        </Banner>
+      )}
+
+      <div className="detail-columns">
+        <div className="detail-main">
+          <Card
+            title="Groups"
+            description="Groups decide which apps and resources someone can use."
+            actions={
+              <>
+                <button className="btn btn-ghost btn-sm" onClick={openCopyFromColleague}>
+                  <Icon name="copy" size={15} />
+                  Copy from a colleague
+                </button>
+                <button className="btn btn-secondary btn-sm" onClick={() => setDialog({ kind: "add-groups" })}>
+                  <Icon name="plus" size={15} />
+                  Add to groups
+                </button>
+              </>
+            }
+          >
+            {memberGroups.length === 0 ? (
+              <div className="inline-empty">
+                {firstName} isn't in any groups yet, so they probably can't use your apps.
               </div>
+            ) : (
+              <ul className="row-list">
+                {memberGroups.map((g) => {
+                  const entry = groups.find((x) => entryName(x) === g);
+                  return (
+                    <li key={g}>
+                      <span className="option-icon">
+                        <Icon name="groups" size={16} />
+                      </span>
+                      <div className="row-list-text">
+                        <Link to={`/groups/${encodeURIComponent(g)}`}>{g}</Link>
+                        {entry && attrVal(entry, "description") && (
+                          <span className="muted small">{attrVal(entry, "description")}</span>
+                        )}
+                      </div>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => setDialog({ kind: "remove-group", group: g })}
+                      >
+                        Remove
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
             )}
-            {copySearch.length > 0 && filteredUsers.length === 0 && (
-              <div style={{ marginTop: 12, color: "var(--text-muted)", fontSize: 14 }}>No users found</div>
+            {builtinGroups.length > 0 && (
+              <details className="builtin-groups">
+                <summary>Also in {builtinGroups.length} built-in Kanidm {builtinGroups.length === 1 ? "group" : "groups"}</summary>
+                <p className="muted small">
+                  These are managed by Kanidm itself (for example admin rights). Change them only if you
+                  know what they do.
+                </p>
+                <div className="chip-list">
+                  {builtinGroups.map((g) => (
+                    <Link key={g} to={`/groups/${encodeURIComponent(g)}`} className="chip chip-muted">
+                      {g}
+                    </Link>
+                  ))}
+                </div>
+              </details>
             )}
-            <div className="modal-actions">
-              <button className="btn-ghost" onClick={() => { setShowCopyGroups(false); setCopySearch(""); }}>
-                Cancel
+          </Card>
+
+          <Card title="Apps they can use" description="Worked out from their groups.">
+            {usableApps.length === 0 ? (
+              <div className="inline-empty">
+                {apps.length === 0
+                  ? "No apps have been connected yet."
+                  : `${firstName} can't sign in to any connected app yet. Add them to a group that has access.`}
+              </div>
+            ) : (
+              <ul className="mini-list">
+                {usableApps.map((a) => (
+                  <li key={entryName(a)}>
+                    <Link to={`/oauth2/${encodeURIComponent(entryName(a))}`}>
+                      <Avatar name={appDisplayName(a)} size="sm" />
+                      <span>{appDisplayName(a)}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+        </div>
+
+        <div className="detail-side">
+          <Card
+            title="Details"
+            actions={
+              <button className="btn btn-ghost btn-sm" onClick={() => setDialog({ kind: "edit" })}>
+                Edit
+              </button>
+            }
+          >
+            <dl className="detail-list">
+              <dt>Full name</dt>
+              <dd>{attrVal(user, "displayname") || "—"}</dd>
+              <dt>Username</dt>
+              <dd>{name}</dd>
+              <dt>Email</dt>
+              <dd>{attrVal(user, "mail") || <span className="muted-italic">Not set</span>}</dd>
+              {status.kind === "active" && status.endsAt && (
+                <>
+                  <dt>Access ends</dt>
+                  <dd>{formatDate(status.endsAt)}</dd>
+                </>
+              )}
+              <dt>Account ID</dt>
+              <dd className="mono small">{attrVal(user, "uuid") || "—"}</dd>
+            </dl>
+          </Card>
+
+          <SignInCard username={name} onSendLink={() => setDialog({ kind: "link" })} />
+
+          <Card title="Leaving or pausing" tone="danger">
+            <div className="danger-row">
+              <div>
+                <strong>{suspended ? "Restore access" : "Suspend access"}</strong>
+                <p className="muted small">
+                  {suspended
+                    ? "Let them sign in again. Their groups are unchanged."
+                    : "For leavers or extended leave. Blocks sign-in straight away; nothing is deleted."}
+                </p>
+              </div>
+              {suspended ? (
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() =>
+                    run(() => enableUser(name), `${firstName}'s access has been restored`).then(reload)
+                  }
+                >
+                  Restore
+                </button>
+              ) : (
+                <button className="btn btn-danger-soft btn-sm" onClick={() => setDialog({ kind: "suspend" })}>
+                  Suspend
+                </button>
+              )}
+            </div>
+            <div className="danger-row">
+              <div>
+                <strong>Delete account</strong>
+                <p className="muted small">Permanently removes the account. Suspending is usually safer.</p>
+              </div>
+              <button className="btn btn-danger btn-sm" onClick={() => setDialog({ kind: "delete" })}>
+                Delete
               </button>
             </div>
-        </Modal>
+          </Card>
+        </div>
+      </div>
+
+      {dialog?.kind === "edit" && <EditPersonModal user={user} onClose={close} onSaved={reload} />}
+      {dialog?.kind === "link" && <SetupLinkModal user={user} onClose={close} />}
+      {dialog?.kind === "add-groups" && (
+        <PickerModal
+          title={`Add ${firstName} to groups`}
+          options={groupOptions(availableGroups)}
+          searchPlaceholder="Search groups…"
+          emptyMessage="They're already in every group. Create a new group from the Groups page."
+          confirmLabel={(n) => (n > 1 ? `Add to ${n} groups` : "Add to group")}
+          onConfirm={handleAddGroups}
+          onClose={close}
+        />
       )}
-      {showSetPassword && (
-        resetUrl ? (
-          <ResetLinkModal
-            title={`Credential Reset for ${attrVal(user, "name")}`}
-            intro="Share this link with the user to set their password:"
-            url={resetUrl}
-            onClose={() => { setShowSetPassword(false); setResetUrl(""); }}
+      {dialog?.kind === "pick-colleague" && (
+        colleagues ? (
+          <PickerModal
+            title="Copy groups from a colleague"
+            description={`${firstName} will be added to the same groups as the person you choose. Built-in Kanidm groups (like admin rights) are never copied.`}
+            options={personOptions(colleagues.filter((u) => entryName(u) !== name))}
+            multiple={false}
+            searchPlaceholder="Search people…"
+            emptyMessage="There's nobody else to copy from."
+            confirmLabel={() => "Continue"}
+            onConfirm={([colleagueName]) => {
+              const colleague = colleagues.find((u) => entryName(u) === colleagueName);
+              if (colleague) {
+                const groupsToAdd = teamGroupNames(colleague, systemNames).filter(
+                  (g) => !memberGroups.includes(g),
+                );
+                setDialog({ kind: "confirm-copy", colleague, groups: groupsToAdd });
+              }
+              return false;
+            }}
+            onClose={close}
           />
         ) : (
-          <Modal
-            title={`Credential Reset for ${attrVal(user, "name")}`}
-            onClose={() => { setShowSetPassword(false); setResetUrl(""); }}
-          >
-            <p className="modal-message">Generating reset link...</p>
-          </Modal>
+          <LoadingState />
         )
+      )}
+      {dialog?.kind === "confirm-copy" && (
+        <ConfirmDialog
+          open
+          tone="primary"
+          title={`Copy groups from ${userDisplayName(dialog.colleague)}`}
+          message={
+            dialog.groups.length === 0 ? (
+              <p>{firstName} is already in all of the groups {userDisplayName(dialog.colleague)} is in.</p>
+            ) : (
+              <GroupPreview groups={dialog.groups} />
+            )
+          }
+          confirmLabel={dialog.groups.length === 0 ? "OK" : "Add to these groups"}
+          onConfirm={async () => {
+            if (dialog.groups.length > 0) await handleAddGroups(dialog.groups);
+            close();
+          }}
+          onCancel={close}
+        />
+      )}
+      {dialog?.kind === "remove-group" && (
+        <ConfirmDialog
+          open
+          title={`Remove from ${dialog.group}?`}
+          message={<p>{firstName} will lose anything this group gives access to. You can add them back later.</p>}
+          confirmLabel="Remove"
+          onConfirm={async () => {
+            const ok = await run(
+              () => removeUserFromGroup(name, dialog.group),
+              `Removed from ${dialog.group}`,
+            );
+            if (ok) {
+              close();
+              reload();
+            }
+          }}
+          onCancel={close}
+        />
+      )}
+      {dialog?.kind === "suspend" && (
+        <ConfirmDialog
+          open
+          title={`Suspend ${displayName}'s access?`}
+          message={
+            <p>
+              They won't be able to sign in to this account or any connected app. Their account and
+              groups are kept, so you can restore access at any time.
+            </p>
+          }
+          confirmLabel="Suspend access"
+          onConfirm={async () => {
+            const ok = await run(() => disableUser(name), `${firstName}'s access has been suspended`);
+            if (ok) {
+              close();
+              reload();
+            }
+          }}
+          onCancel={close}
+        />
+      )}
+      {dialog?.kind === "delete" && (
+        <ConfirmDialog
+          open
+          title={`Delete ${displayName}'s account?`}
+          message={
+            <>
+              <p>
+                This removes <strong>{name}</strong> and their group memberships. They won't be able to
+                sign in again.
+              </p>
+              {!suspended && (
+                <p className="muted">
+                  Tip: if they might come back, or you're not sure yet, suspend their access instead.
+                </p>
+              )}
+            </>
+          }
+          confirmLabel="Delete account"
+          onConfirm={async () => {
+            const ok = await run(() => deleteUser(name), `${displayName}'s account was deleted`);
+            if (ok) navigate("/users");
+          }}
+          onCancel={close}
+        />
       )}
     </div>
   );

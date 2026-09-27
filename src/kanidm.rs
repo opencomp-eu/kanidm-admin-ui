@@ -231,13 +231,13 @@ impl KanidmClient {
             .map_err(|e| send_error(path, e))
     }
 
-    async fn patch<T: Serialize>(
+    async fn put<T: Serialize>(
         &self,
         path: &str,
         body: &T,
     ) -> Result<reqwest::Response, AppError> {
         self.http
-            .patch(self.url(path))
+            .put(self.url(path))
             .bearer_auth(&self.token)
             .json(body)
             .send()
@@ -357,26 +357,84 @@ impl KanidmClient {
         Ok(())
     }
 
-    async fn set_person_status(&self, id: &str, status: &str) -> Result<(), AppError> {
-        let body = ModifyRequest {
-            filter: Filter::eq("name", id),
-            modlist: ModifyList {
-                mods: vec![Modify::present("status", status)],
-            },
-        };
-
-        let resp =
-            Self::check_response(self.patch(&format!("/v1/person/{id}"), &body).await?).await?;
+    /// Replaces every value of `attr` on a person or group entry.
+    async fn set_attr(
+        &self,
+        kind: EntryKind,
+        id: &str,
+        attr: &str,
+        values: &[&str],
+    ) -> Result<(), AppError> {
+        let path = format!("/v1/{}/{id}/_attr/{attr}", kind.path());
+        let resp = Self::check_response(self.put(&path, &values).await?).await?;
         let _ = resp.text().await;
         Ok(())
     }
 
-    pub async fn disable_person(&self, id: &str) -> Result<(), AppError> {
-        self.set_person_status(id, "disabled").await
+    /// Removes every value of `attr` from a person or group entry.
+    async fn purge_attr(&self, kind: EntryKind, id: &str, attr: &str) -> Result<(), AppError> {
+        let path = format!("/v1/{}/{id}/_attr/{attr}", kind.path());
+        let resp = Self::check_response(self.delete(&path).await?).await?;
+        let _ = resp.text().await;
+        Ok(())
     }
 
+    /// Kanidm has no account status attribute: an account is locked once its
+    /// `account_expire` time has passed, exactly like
+    /// `kanidm person validity expire-at <id> now`.
+    pub async fn disable_person(&self, id: &str) -> Result<(), AppError> {
+        let now = rfc3339_utc(unix_now());
+        self.set_attr(EntryKind::Person, id, "account_expire", &[&now])
+            .await
+    }
+
+    /// Clearing the expiry is how Kanidm re-enables an account
+    /// (`kanidm person validity expire-at <id> never`).
     pub async fn enable_person(&self, id: &str) -> Result<(), AppError> {
-        self.set_person_status(id, "active").await
+        self.purge_attr(EntryKind::Person, id, "account_expire")
+            .await
+    }
+
+    pub async fn update_person_details(
+        &self,
+        id: &str,
+        displayname: &str,
+        mail: Option<&str>,
+    ) -> Result<(), AppError> {
+        self.set_attr(EntryKind::Person, id, "displayname", &[displayname])
+            .await?;
+        match mail {
+            Some(m) => self.set_attr(EntryKind::Person, id, "mail", &[m]).await,
+            None => self.purge_attr(EntryKind::Person, id, "mail").await,
+        }
+    }
+
+    /// Human-readable sign-in methods the person has set up. An empty list
+    /// means they have not completed their account setup yet.
+    pub async fn person_sign_in_methods(&self, id: &str) -> Result<Vec<String>, AppError> {
+        let resp = Self::check_response(
+            self.get(&format!("/v1/person/{id}/_credential/_status"))
+                .await?,
+        )
+        .await?;
+        let status: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| AppError::Upstream(e.to_string()))?;
+        let mut methods = credential_status_labels(&status);
+
+        // Passkeys live on their own attribute rather than in the primary
+        // credential status.
+        let person = self.get_person(id).await?;
+        let passkeys = person.attrs.get("passkeys").map_or(0, Vec::len);
+        if passkeys > 0 {
+            methods.push(if passkeys == 1 {
+                "Passkey".to_string()
+            } else {
+                format!("{passkeys} passkeys")
+            });
+        }
+        Ok(methods)
     }
 
     // -- Person groups --
@@ -440,7 +498,7 @@ impl KanidmClient {
     }
 
     // -- Credentials --
-    pub async fn generate_reset_token(&self, person_id: &str) -> Result<String, AppError> {
+    pub async fn generate_reset_token(&self, person_id: &str) -> Result<ResetLink, AppError> {
         // Generate a reset token that the user can use to set their own password.
         let resp = Self::check_response(
             self.get(&format!(
@@ -460,7 +518,10 @@ impl KanidmClient {
 
         // Link must open in the user's browser, so use the public origin even
         // when KANIDM_URL points at an internal address.
-        Ok(format!("{}/ui/reset?token={token}", self.public_url))
+        Ok(ResetLink {
+            url: format!("{}/ui/reset?token={token}", self.public_url),
+            expires_at: intent["expiry_time"].as_str().map(str::to_string),
+        })
     }
 
     // -- Groups --
@@ -516,6 +577,20 @@ impl KanidmClient {
         let resp = Self::check_response(self.delete(&format!("/v1/group/{id}")).await?).await?;
         let _ = resp.text().await;
         Ok(())
+    }
+
+    pub async fn update_group_description(
+        &self,
+        id: &str,
+        description: Option<&str>,
+    ) -> Result<(), AppError> {
+        match description {
+            Some(d) => {
+                self.set_attr(EntryKind::Group, id, "description", &[d])
+                    .await
+            }
+            None => self.purge_attr(EntryKind::Group, id, "description").await,
+        }
     }
 
     // -- Group members --
@@ -583,12 +658,125 @@ impl KanidmClient {
         Ok(body)
     }
 
+    pub async fn get_oauth2(&self, rs_name: &str) -> Result<Entry, AppError> {
+        let resp =
+            Self::check_response(self.get(&format!("/v1/oauth2/{rs_name}")).await?).await?;
+        // Kanidm answers an unknown app with 200 and a `null` body.
+        let entry: Option<Entry> = resp
+            .json()
+            .await
+            .map_err(|e| AppError::Upstream(e.to_string()))?;
+        entry.ok_or(AppError::NotFound)
+    }
+
     pub async fn delete_oauth2(&self, rs_name: &str) -> Result<(), AppError> {
         let resp =
             Self::check_response(self.delete(&format!("/v1/oauth2/{rs_name}")).await?).await?;
         let _ = resp.text().await;
         Ok(())
     }
+
+    /// Lets members of `group` sign in to the app. Kanidm refuses OAuth2
+    /// logins from anyone not covered by a scope map.
+    pub async fn grant_oauth2_access(&self, rs_name: &str, group: &str) -> Result<(), AppError> {
+        let resp = Self::check_response(
+            self.post(
+                &format!("/v1/oauth2/{rs_name}/_scopemap/{group}"),
+                &OAUTH2_DEFAULT_SCOPES,
+            )
+            .await?,
+        )
+        .await?;
+        let _ = resp.text().await;
+        Ok(())
+    }
+
+    pub async fn revoke_oauth2_access(&self, rs_name: &str, group: &str) -> Result<(), AppError> {
+        let resp = Self::check_response(
+            self.delete(&format!("/v1/oauth2/{rs_name}/_scopemap/{group}"))
+                .await?,
+        )
+        .await?;
+        let _ = resp.text().await;
+        Ok(())
+    }
+}
+
+/// Scopes granted when a group is given access to an app: enough for a
+/// standard OIDC login (identity, name and email).
+const OAUTH2_DEFAULT_SCOPES: [&str; 3] = ["openid", "profile", "email"];
+
+#[derive(Clone, Copy)]
+enum EntryKind {
+    Person,
+    Group,
+}
+
+impl EntryKind {
+    fn path(self) -> &'static str {
+        match self {
+            EntryKind::Person => "person",
+            EntryKind::Group => "group",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ResetLink {
+    pub url: String,
+    pub expires_at: Option<String>,
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock before Unix epoch")
+        .as_secs()
+}
+
+/// Formats a Unix timestamp as an RFC 3339 UTC datetime, the format Kanidm
+/// expects for datetime attributes such as `account_expire`.
+fn rfc3339_utc(unix_secs: u64) -> String {
+    let days = (unix_secs / 86_400) as i64;
+    let secs_of_day = unix_secs % 86_400;
+    // Civil-from-days conversion (Howard Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        secs_of_day / 3_600,
+        (secs_of_day % 3_600) / 60,
+        secs_of_day % 60
+    )
+}
+
+/// Maps Kanidm's `CredentialStatus` (`{"creds":[{"type_": ...}]}`) to labels
+/// a non-technical admin can understand.
+fn credential_status_labels(status: &serde_json::Value) -> Vec<String> {
+    let Some(creds) = status["creds"].as_array() else {
+        return Vec::new();
+    };
+    creds
+        .iter()
+        .map(|cred| {
+            let kind = &cred["type_"];
+            match kind.as_str() {
+                Some("Password") | Some("GeneratedPassword") => "Password".to_string(),
+                _ if kind.get("PasswordMfa").is_some() => {
+                    "Password with two-factor authentication".to_string()
+                }
+                _ if kind.get("Passkey").is_some() => "Passkey".to_string(),
+                _ => "Other sign-in method".to_string(),
+            }
+        })
+        .collect()
 }
 
 /// Kanidm OAuth2 resource servers have no `redirect_uri` attribute — redirect
@@ -694,5 +882,157 @@ e66KmRDhIM57o+U=
                      Other(OtherError(CaUsedAsEndEntity))";
         assert!(tls_hint(chain).unwrap().contains("CA:FALSE"));
         assert!(tls_hint("dns error: failed to lookup address information").is_none());
+    }
+
+    #[test]
+    fn rfc3339_utc_formats_known_timestamps() {
+        assert_eq!(rfc3339_utc(0), "1970-01-01T00:00:00Z");
+        assert_eq!(rfc3339_utc(951_782_400), "2000-02-29T00:00:00Z");
+        assert_eq!(rfc3339_utc(1_790_000_000), "2026-09-21T14:13:20Z");
+        assert_eq!(rfc3339_utc(4_107_542_399), "2100-02-28T23:59:59Z");
+    }
+
+    #[test]
+    fn credential_status_labels_are_human_readable() {
+        let status = serde_json::json!({ "creds": [
+            { "uuid": "00000000-0000-0000-0000-000000000001", "type_": "Password" },
+            { "uuid": "00000000-0000-0000-0000-000000000002", "type_": { "PasswordMfa": [true, false, 0] } },
+        ]});
+        assert_eq!(
+            credential_status_labels(&status),
+            ["Password", "Password with two-factor authentication"]
+        );
+        assert!(credential_status_labels(&serde_json::json!({ "creds": [] })).is_empty());
+        assert!(credential_status_labels(&serde_json::json!(null)).is_empty());
+    }
+
+    fn client_for(server: &wiremock::MockServer) -> KanidmClient {
+        KanidmClient {
+            http: HttpClient::new(),
+            base_url: server.uri(),
+            public_url: "https://idm.example.com".into(),
+            token: "token".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn disable_person_sets_account_expire() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, Request, ResponseTemplate};
+
+        let server = wiremock::MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path("/v1/person/alice/_attr/account_expire"))
+            .and(|req: &Request| {
+                let values: Vec<String> = serde_json::from_slice(&req.body).unwrap_or_default();
+                values.len() == 1 && values[0].ends_with('Z') && values[0].contains('T')
+            })
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!(null)))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        client_for(&server).disable_person("alice").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn enable_person_purges_account_expire() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+
+        let server = wiremock::MockServer::start().await;
+        Mock::given(method("DELETE"))
+            .and(path("/v1/person/alice/_attr/account_expire"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!(null)))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        client_for(&server).enable_person("alice").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn update_person_details_purges_cleared_email() {
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, ResponseTemplate};
+
+        let server = wiremock::MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path("/v1/person/alice/_attr/displayname"))
+            .and(body_json(serde_json::json!(["Alice Smith"])))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path("/v1/person/alice/_attr/mail"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        client_for(&server)
+            .update_person_details("alice", "Alice Smith", None)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn get_oauth2_maps_null_body_to_not_found() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+
+        let server = wiremock::MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/oauth2/missing"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!(null)))
+            .mount(&server)
+            .await;
+
+        let err = client_for(&server).get_oauth2("missing").await.unwrap_err();
+        assert!(matches!(err, AppError::NotFound));
+    }
+
+    #[tokio::test]
+    async fn grant_oauth2_access_sends_default_scopes() {
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, ResponseTemplate};
+
+        let server = wiremock::MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/oauth2/wiki/_scopemap/staff"))
+            .and(body_json(serde_json::json!(["openid", "profile", "email"])))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        client_for(&server)
+            .grant_oauth2_access("wiki", "staff")
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn reset_link_uses_public_url_and_reports_expiry() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+
+        let server = wiremock::MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/person/alice/_credential/_update_intent"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "token": "abc123",
+                "expiry_time": "2026-09-27T20:00:00Z",
+            })))
+            .mount(&server)
+            .await;
+
+        let link = client_for(&server)
+            .generate_reset_token("alice")
+            .await
+            .unwrap();
+        assert_eq!(link.url, "https://idm.example.com/ui/reset?token=abc123");
+        assert_eq!(link.expires_at.as_deref(), Some("2026-09-27T20:00:00Z"));
     }
 }
